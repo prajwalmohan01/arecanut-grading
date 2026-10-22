@@ -1,0 +1,218 @@
+{
+  "generated_at": "2026-10-22T16:59:54.665572+00:00",
+  "kagglehub_version": "1.0.3",
+  "datasets_requested": {
+    "duvacs_new_arecanut": "duvacs/new-arecanut",
+    "subrahmanya090_arecanut": "subrahmanya090/arecanut",
+    "tejpaviraj_arecanut": "tejpaviraj/arecanut"
+  },
+  "datasets": [
+    {
+      "name": "duvacs_new_arecanut",
+      "id": "duvacs/new-arecanut",
+      "path": "C:\\Users\\Admin\\.cache\\kagglehub\\datasets\\duvacs\\new-arecanut\\versions\\1",
+      "inspected_at": "2026-10-22T16:59:57.389489+00:00",
+      "exists": true,
+      "errors": [],
+      "total_files": 1167,
+      "image_files": 1167,
+      "readable_images": 1167,
+      "unreadable_images": 0,
+      "corrupted_image_samples": [],
+      "common_dimensions": {
+        "256x256": 1017,
+        "3072x3072": 53,
+        "3060x3060": 43,
+        "2448x2448": 38,
+        "1836x1836": 7,
+        "1472x1472": 2,
+        "1797x1797": 2,
+        "1388x1388": 1,
+        "1924x1924": 1,
+        "1892x1892": 1
+      },
+      "archive_files": [],
+      "annotation_files": 0,
+      "annotation_extensions": [],
+      "annotation_samples": [],
+      "yolo_label_dirs": [],
+      "yolo_label_count": 0,
+      "yolo_class_names": [],
+      "folder_label_counts": {
+        "Unripen": 629,
+        "Ripenes": 538
+      },
+      "streamed_folder_counts": {},
+      "label_level": "image-level (folder/class labels)",
+      "bounding_boxes_available": false,
+      "explicit_grade_labels": {
+        "A": false,
+        "B": false,
+        "C": false,
+        "D": false
+      },
+      "explicit_grade_support": [],
+      "limitations": [
+        "No YOLO/COCO/VOC bounding-box annotations were found. Object-detection training is not supported by this dataset as delivered; labels are image-level folder names only."
+      ],
+      "expected_content": "Arecanut ripeness images (Ripenes / Unripen folders)."
+    },
+    {
+      "name": "subrahmanya090_arecanut",
+      "id": "subrahmanya090/arecanut",
+      "path": "C:\\Users\\Admin\\.cache\\kagglehub\\datasets\\subrahmanya090\\arecanut",
+      "inspected_at": "2026-10-22T17:00:01.942084+00:00",
+      "exists": true,
+      "errors": [],
+      "total_files": 1,
+      "image_files": 0,
+      "readable_images": 0,
+      "unreadable_images": 0,
+      "corrupted_image_samples": [],
+      "common_dimensions": {},
+      "archive_files": [
+        {
+          "path": "1.archive",
+          "size_bytes": 1473249280,
+          "valid_zip": false,
+          "streamed_contents": {
+            "entries": 424,
+            "extensions": {
+              ".jpg": 424
+            },
+            "top_folders": {
+              "Bette": 424
+            },
+            "samples": [
+              "arecanut/Bette/IMG_20241102_191315575.jpg",
+              "arecanut/Bette/IMG_20241102_191322886.jpg",
+              "arecanut/Bette/IMG_20241102_191828631.jpg",
+              "arecanut/Bette/IMG_20241102_191834963.jpg",
+              "arecanut/Bette/IMG_20241102_191846444.jpg",
+              "arecanut/Bette/IMG_20241102_191852083.jpg",
+              "arecanut/Bette/IMG_20241102_191858580.jpg",
+              "arecanut/Bette/IMG_20241102_191904151.jpg",
+              "arecanut/Bette/IMG_20241102_191909850.jpg",
+              "arecanut/Bette/IMG_20241102_191921179.jpg"
+            ],
+            "truncated": true,
+            "error": "TruncatedDataError: ",
+            "time_budget_exceeded": false,
+            "elapsed_seconds": 5.5
+          }
+        }
+      ],
+      "annotation_files": 0,
+      "annotation_extensions": [],
+      "annotation_samples": [],
+      "yolo_label_dirs": [],
+      "yolo_label_count": 0,
+      "yolo_class_names": [],
+      "folder_label_counts": {},
+      "streamed_folder_counts": {
+        "Bette": 424
+      },
+      "label_level": "image-level (folder/class labels)",
+      "bounding_boxes_available": false,
+      "explicit_grade_labels": {
+        "A": false,
+        "B": false,
+        "C": false,
+        "D": false
+      },
+      "explicit_grade_support": [],
+      "limitations": [
+        "Only archive files were found; KaggleHub did not extract them. Archive entries were streamed from the local headers, but the file has no end-of-central-directory record, so it is incomplete/truncated and the reported counts are a lower bound, not the full dataset.",
+        "No YOLO/COCO/VOC bounding-box annotations were found. Object-detection training is not supported by this dataset as delivered; labels are image-level folder names only."
+      ],
+      "expected_content": "Arecanut image folders; annotation format unknown until inspected."
+    },
+    {
+      "name": "tejpaviraj_arecanut",
+      "id": "tejpaviraj/arecanut",
+      "path": "C:\\Users\\Admin\\.cache\\kagglehub\\datasets\\tejpaviraj\\arecanut",
+      "inspected_at": "2026-10-22T17:00:07.682558+00:00",
+      "exists": true,
+      "errors": [],
+      "total_files": 1,
+      "image_files": 0,
+      "readable_images": 0,
+      "unreadable_images": 0,
+      "corrupted_image_samples": [],
+      "common_dimensions": {},
+      "archive_files": [
+        {
+          "path": "2.archive",
+          "size_bytes": 1268776960,
+          "valid_zip": false,
+          "streamed_contents": {
+            "entries": 2107,
+            "extensions": {
+              ".jpg": 2107
+            },
+            "top_folders": {
+              "Mahali_Koleroga": 641,
+              "Healthy_Nut": 472,
+              "Healthy_Trunk": 359,
+              "yellow leaf disease": 261,
+              "Healthy_Leaf": 152,
+              "stem cracking": 135,
+              "Stem_bleeding": 38,
+              "bud borer": 36,
+              "healthy_foot": 13
+            },
+            "samples": [
+              "Arecanut_dataset/Arecanut_dataset/test/Healthy_Leaf/Healthy_Leaf_original_50.jpg_8fd3cca6-b7bd-4702-a574-a7f9f115290b.jpg",
+              "Arecanut_dataset/Arecanut_dataset/test/Healthy_Leaf/Healthy_Leaf_original_50.jpg_f275427b-25f9-4365-9d97-c237e95d48b3.jpg",
+              "Arecanut_dataset/Arecanut_dataset/test/Healthy_Leaf/Healthy_Leaf_original_51.jpg_c595199b-e3c2-463f-8c9e-5a513a7f473c.jpg",
+              "Arecanut_dataset/Arecanut_dataset/test/Healthy_Leaf/Healthy_Leaf_original_51.jpg_d5051ed5-73ee-417d-9aed-7b8600480222.jpg",
+              "Arecanut_dataset/Arecanut_dataset/test/Healthy_Leaf/Healthy_Leaf_original_510.jpg_98d3a0c9-e6db-4539-bf7f-c4193f1eee8e.jpg",
+              "Arecanut_dataset/Arecanut_dataset/test/Healthy_Leaf/Healthy_Leaf_original_510.jpg_acc06261-622a-4201-9f85-3bf67dedad4f.jpg",
+              "Arecanut_dataset/Arecanut_dataset/test/Healthy_Leaf/Healthy_Leaf_original_510.jpg_c3d199e0-3201-41ba-b888-dd955d69c733.jpg",
+              "Arecanut_dataset/Arecanut_dataset/test/Healthy_Leaf/Healthy_Leaf_original_511.jpg_71eb717b-4154-4b46-8967-07559480e610.jpg",
+              "Arecanut_dataset/Arecanut_dataset/test/Healthy_Leaf/Healthy_Leaf_original_511.jpg_8ae3a899-2c90-44a3-b04f-72e742cac5cd.jpg",
+              "Arecanut_dataset/Arecanut_dataset/test/Healthy_Leaf/Healthy_Leaf_original_512.jpg_3517d866-41d8-48cf-91d8-4342bcf803af.jpg"
+            ],
+            "truncated": true,
+            "error": "TruncatedDataError: ",
+            "time_budget_exceeded": false,
+            "elapsed_seconds": 9.1
+          }
+        }
+      ],
+      "annotation_files": 0,
+      "annotation_extensions": [],
+      "annotation_samples": [],
+      "yolo_label_dirs": [],
+      "yolo_label_count": 0,
+      "yolo_class_names": [],
+      "folder_label_counts": {},
+      "streamed_folder_counts": {
+        "Mahali_Koleroga": 641,
+        "Healthy_Nut": 472,
+        "Healthy_Trunk": 359,
+        "yellow leaf disease": 261,
+        "Healthy_Leaf": 152,
+        "stem cracking": 135,
+        "Stem_bleeding": 38,
+        "bud borer": 36,
+        "healthy_foot": 13
+      },
+      "label_level": "image-level (folder/class labels)",
+      "bounding_boxes_available": false,
+      "explicit_grade_labels": {
+        "A": false,
+        "B": false,
+        "C": false,
+        "D": false
+      },
+      "explicit_grade_support": [],
+      "limitations": [
+        "Only archive files were found; KaggleHub did not extract them. Archive entries were streamed from the local headers, but the file has no end-of-central-directory record, so it is incomplete/truncated and the reported counts are a lower bound, not the full dataset.",
+        "No YOLO/COCO/VOC bounding-box annotations were found. Object-detection training is not supported by this dataset as delivered; labels are image-level folder names only."
+      ],
+      "expected_content": "Arecanut plant/leaf disease image folders (classification)."
+    }
+  ],
+  "grade_cd_conclusion": "No inspected dataset provides both explicit Grade C/D labels and individual-nut bounding boxes. The delivered datasets are image-level classifications (ripeness and plant-disease folders) with no nut-level grade annotations. Grade C/D cannot be trained from these files without fabricating labels. The current GradeA/GradeB detector is preserved. To enable C/D, annotate individual nuts with YOLO boxes labelled GradeA/GradeB/GradeC/GradeD, point scripts/prepare_dataset.py at that dataset, then run scripts/train_model.py and scripts/evaluate_model.py."
+}

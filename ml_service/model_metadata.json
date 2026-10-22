@@ -1,0 +1,72 @@
+{
+  "id": "arecanut-yolov8-gradeab",
+  "version": "1.0.0",
+  "description": "Trained YOLOv8 object detector preserved from the original project. Its weights are unchanged; it supports Grade A and Grade B only.",
+  "artifact": "weights/best.pt",
+  "sha256": "5E141ABD6BD334E61AA733AA00994B8E5AF4D2104A677BE4A7B7215092883268",
+  "size_bytes": 6249322,
+  "task": "detect",
+  "classes": [
+    { "index": 0, "name": "GradeA", "grade": "A" },
+    { "index": 1, "name": "GradeB", "grade": "B" }
+  ],
+  "supported_grades": ["A", "B"],
+  "unsupported_grades": ["C", "D"],
+  "input": {
+    "imgsz": 640,
+    "color_space": "BGR (OpenCV); converted internally by Ultralytics",
+    "normalization": "Ultralytics internal letterbox + 0-1 scaling",
+    "confidence_threshold": 0.25,
+    "iou_threshold": 0.45
+  },
+  "runtime_defaults": {
+    "imgsz": 1280,
+    "confidence_threshold": 0.05,
+    "iou_threshold": 0.35,
+    "max_det": 2000,
+    "augment": true,
+    "tiled_inference": true,
+    "tile_size": 640,
+    "tile_overlap": 0.25,
+    "notes": "Operational thresholds are tuned for dense tray images and can be overridden with MODEL_* / USE_TILED / TILE_* environment variables."
+  },
+  "grading_methodology": {
+    "supported_grades_source": "Derived at runtime from the loaded checkpoint's own class names. GradeC/GradeD are reported only if the checkpoint actually contains those classes.",
+    "image_level_grade": "The majority detected grade becomes the image-level grade; ties favour the better grade (A > B > C > D). No grade is invented for classes the model does not contain.",
+    "confidence": "Mean confidence of detections in the winning grade class, reported as a percentage. This is not a calibrated probability.",
+    "quality_score": "Documented heuristic composition score using weights A=1.0, B=0.5, C=0.25, D=0.0 over model-supported grades only. It is not a model output or a laboratory result.",
+    "unsupported_grades": "Grade C and Grade D are not evaluated by this checkpoint. They are shown as unsupported rather than relabelled from A/B predictions."
+  },
+  "capabilities": {
+    "object_detection": true,
+    "image_classification": false,
+    "instance_segmentation": false,
+    "defect_detection": false,
+    "size_shape_physical_measurement": false,
+    "multi_grade_dynamic": true,
+    "notes": "Bounding boxes can be used only for image-space size/aspect estimates. Black-spot, crack, mold, and discoloration detection are not supported by this model. The application supports four-grade checkpoints without code changes."
+  },
+  "training": {
+    "mode": "explicit_manual_only",
+    "active_model_overwritten_on_startup": false,
+    "scripts": {
+      "inspect": "scripts/inspect_datasets.py",
+      "prepare": "scripts/prepare_dataset.py",
+      "train": "scripts/train_model.py",
+      "evaluate": "scripts/evaluate_model.py"
+    },
+    "candidate_dir": "ml_service/weights/candidates",
+    "backup_dir": "ml_service/weights/backups",
+    "promotion": "Only scripts/train_model.py --promote copies a candidate over weights/best.pt, after a supplied evaluation report and baseline comparison. The active model is backed up first."
+  },
+  "evaluation": {
+    "available": false,
+    "reason": "No verified held-out evaluation report or labelled evaluation dataset is bundled with this preserved artifact. Metrics are intentionally not fabricated. Use scripts/evaluate_model.py with a labelled YOLO dataset to generate evaluation/metrics.json."
+  },
+  "known_limitations": [
+    "The bundled checkpoint detects Grade A and Grade B only.",
+    "No defect, crack, mold, discoloration, or physical-size model is bundled.",
+    "Grade C/D become available only after training and promoting a checkpoint whose class names include GradeC/GradeD.",
+    "The public Kaggle datasets inspected for this project provide image-level ripeness/plant-disease folders, not individual-nut grade bounding boxes."
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "name": "arecanut-server",
+  "version": "2.0.0",
+  "description": "Express API for the Arecanut Quality Grading System",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "node --test --test-concurrency=1 tests/unit tests/integration",
+    "test:unit": "node --test --test-concurrency=1 tests/unit",
+    "test:integration": "node --test --test-concurrency=1 tests/integration",
+    "verify:model": "python ../ml_service/../scripts/verify_model.py || python ../scripts/verify_model.py",
+    "bootstrap:admin": "node scripts/bootstrapAdmin.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.22.1",
+    "express-rate-limit": "^8.7.1",
+    "form-data": "^4.0.6",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.24.6",
+    "multer": "^1.4.5-lts.2",
+    "pdfkit": "^0.20.2"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.3.0",
+    "nodemon": "^3.0.2",
+    "pdf-parse": "^2.4.5",
+    "supertest": "^7.3.1"
+  },
+  "overrides": {
+    "qs": "^6.16.1"
+  }
+}

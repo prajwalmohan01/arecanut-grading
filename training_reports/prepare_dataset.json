@@ -1,0 +1,9 @@
+{
+  "generated_at": "2026-10-22T17:04:51.648339+00:00",
+  "output_dir": "C:\\Users\\Admin\\Projects\\arecanut-grading\\training_cache\\dataset",
+  "ready": false,
+  "errors": [
+    "No --data supplied. No inspected Kaggle dataset contains YOLO bounding-box annotations, so there is nothing legitimate to prepare."
+  ],
+  "warnings": []
+}

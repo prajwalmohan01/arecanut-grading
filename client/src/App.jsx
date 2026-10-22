@@ -1,0 +1,164 @@
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { useEffect } from 'react';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { ToastProvider } from './context/ToastContext';
+import AppLayout from './layouts/AppLayout';
+import Login from './pages/Login';
+import Signup from './pages/Signup';
+import Home from './pages/Home';
+import Dashboard from './pages/Dashboard';
+import Upload from './pages/Upload';
+import Result from './pages/Result';
+import History from './pages/History';
+import Compare from './pages/Compare';
+import Performance from './pages/Performance';
+import Profile from './pages/Profile';
+import NotFound from './pages/NotFound';
+import { LeafIcon } from './components/Icons';
+import Spinner from './components/ui/Spinner';
+
+function Splash() {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4">
+      <span className="flex h-14 w-14 items-center justify-center rounded-3xl bg-gradient-to-br from-forest-600 to-emerald-600 text-white shadow-lg">
+        <LeafIcon width={26} height={26} />
+      </span>
+      <div className="flex items-center gap-2 text-sm text-muted">
+        <Spinner size={15} />
+        Loading your workspace…
+      </div>
+    </div>
+  );
+}
+
+function ProtectedRoute({ children }) {
+  const { isAuthenticated, booting } = useAuth();
+  const location = useLocation();
+  if (booting) return <Splash />;
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
+  return <AppLayout>{children}</AppLayout>;
+}
+
+function PublicOnlyRoute({ children }) {
+  const { isAuthenticated, booting } = useAuth();
+  const location = useLocation();
+  if (booting) return <Splash />;
+  if (isAuthenticated) {
+    return <Navigate to={location.state?.from || '/home'} replace />;
+  }
+  return children;
+}
+
+function ScrollToTop() {
+  const location = useLocation();
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }, [location.pathname]);
+  return null;
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <ToastProvider>
+          <ScrollToTop />
+          <Routes>
+            <Route path="/" element={<Navigate to="/home" replace />} />
+            <Route
+              path="/login"
+              element={
+                <PublicOnlyRoute>
+                  <Login />
+                </PublicOnlyRoute>
+              }
+            />
+            <Route
+              path="/signup"
+              element={
+                <PublicOnlyRoute>
+                  <Signup />
+                </PublicOnlyRoute>
+              }
+            />
+            <Route
+              path="/home"
+              element={
+                <ProtectedRoute>
+                  <Home />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <Dashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/upload"
+              element={
+                <ProtectedRoute>
+                  <Upload />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/result"
+              element={
+                <ProtectedRoute>
+                  <Result />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/result/:id"
+              element={
+                <ProtectedRoute>
+                  <Result />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/history"
+              element={
+                <ProtectedRoute>
+                  <History />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/compare"
+              element={
+                <ProtectedRoute>
+                  <Compare />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/performance"
+              element={
+                <ProtectedRoute>
+                  <Performance />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <Profile />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </ToastProvider>
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}

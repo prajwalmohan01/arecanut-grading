@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!.env.template
+kaggle.json
+.kaggle/
+
+# Uploads / runtime reports
+server/uploads/*
+!server/uploads/.gitkeep
+ml_service/__pycache__/
+ml_service/annotated/
+ml_service/temp/
+
+# Raw datasets and Kaggle cache (never commit)
+datasets/
+data_*/
+training_cache/
+.cache/
+kagglehub/
+*.archive
+*.7z
+
+# Training outputs that should not be committed
+ml_service/weights/backups/
+ml_service/weights/candidates/
+ml_service/evaluation/*.tmp
+training_reports/*.tmp
+runs/
+
+# Logs
+*.log
+
+# Build
+client/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Scratch
+tmp_*.py
+tmp_*.json
