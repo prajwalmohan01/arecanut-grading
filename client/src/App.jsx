@@ -1,5 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
 import AppLayout from './layouts/AppLayout';
@@ -18,6 +18,19 @@ import Profile from './pages/Profile';
 import NotFound from './pages/NotFound';
 import { LeafIcon } from './components/Icons';
 import Spinner from './components/ui/Spinner';
+
+const ManualDashboard = lazy(() => import('./pages/manual/ManualDashboard'));
+const ManualNew = lazy(() => import('./pages/manual/ManualNew'));
+const ManualRecords = lazy(() => import('./pages/manual/ManualRecords'));
+const ManualRecordDetail = lazy(() => import('./pages/manual/ManualRecordDetail'));
+const ManualBatches = lazy(() => import('./pages/manual/ManualBatches'));
+const ManualBatchDetail = lazy(() => import('./pages/manual/ManualBatchDetail'));
+const ManualCompare = lazy(() => import('./pages/manual/ManualCompare'));
+const ManualGallery = lazy(() => import('./pages/manual/ManualGallery'));
+const ManualCalculator = lazy(() => import('./pages/manual/ManualCalculator'));
+const ManualActivity = lazy(() => import('./pages/manual/ManualActivity'));
+const VerifyAssessment = lazy(() => import('./pages/VerifyAssessment'));
+
 
 function Splash() {
   return (
@@ -67,7 +80,8 @@ export default function App() {
       <AuthProvider>
         <ToastProvider>
           <ScrollToTop />
-          <Routes>
+          <Suspense fallback={<Splash />}>
+            <Routes>
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route
               path="/login"
@@ -173,8 +187,93 @@ export default function App() {
                 </ProtectedRoute>
               }
             />
+            <Route
+              path="/manual"
+              element={
+                <ProtectedRoute>
+                  <ManualDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/manual/new"
+              element={
+                <ProtectedRoute>
+                  <ManualNew />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/manual/records"
+              element={
+                <ProtectedRoute>
+                  <ManualRecords />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/manual/records/:id"
+              element={
+                <ProtectedRoute>
+                  <ManualRecordDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/manual/batches"
+              element={
+                <ProtectedRoute>
+                  <ManualBatches />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/manual/batches/:id"
+              element={
+                <ProtectedRoute>
+                  <ManualBatchDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/manual/compare"
+              element={
+                <ProtectedRoute>
+                  <ManualCompare />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/manual/gallery"
+              element={
+                <ProtectedRoute>
+                  <ManualGallery />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/manual/calculator"
+              element={
+                <ProtectedRoute>
+                  <ManualCalculator />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/manual/activity"
+              element={
+                <ProtectedRoute>
+                  <ManualActivity />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/verify/:token"
+              element={<VerifyAssessment />}
+            />
             <Route path="*" element={<NotFound />} />
-          </Routes>
+            </Routes>
+          </Suspense>
         </ToastProvider>
       </AuthProvider>
     </BrowserRouter>

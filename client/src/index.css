@@ -250,6 +250,61 @@
     color: var(--muted);
     background: var(--panel-soft);
   }
+  .badge-danger {
+    color: var(--danger);
+    background: var(--danger-soft);
+    border-color: rgba(180, 66, 66, 0.28);
+  }
+
+  .section-label {
+    @apply text-[10px] font-bold uppercase tracking-[0.16em];
+    color: var(--muted);
+  }
+  .progress-track {
+    @apply h-2 w-full overflow-hidden rounded-full;
+    background: var(--panel-soft);
+    border: 1px solid var(--border);
+  }
+  .progress-bar {
+    height: 100%;
+    border-radius: 9999px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+    transition: width 350ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .stepper-step {
+    @apply flex items-center gap-2.5 rounded-xl border px-3 py-2.5 transition;
+    border-color: var(--border);
+    background: var(--panel-soft);
+  }
+  .stepper-step.complete {
+    border-color: rgba(47, 125, 91, 0.35);
+    background: var(--accent-soft);
+  }
+  .stepper-dot {
+    @apply flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold;
+    color: var(--muted);
+    background: var(--panel-strong);
+    border: 1px solid var(--border-strong);
+  }
+  .stepper-step.complete .stepper-dot {
+    color: var(--accent-contrast);
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .grade-option {
+    @apply block w-full cursor-pointer rounded-2xl border p-3.5 transition;
+    border-color: var(--border);
+    background: var(--panel-strong);
+  }
+  .grade-option:hover {
+    border-color: var(--border-strong);
+    background: var(--panel-soft);
+  }
+  .grade-option.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
 
   .nav-link {
     @apply flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold transition-all duration-200;

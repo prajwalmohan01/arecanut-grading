@@ -18,7 +18,7 @@ function errorHandler(error, req, res, next) {
       message = `File exceeds the ${config.maxUploadMb}MB upload limit.`;
     } else if (error.code === 'LIMIT_UNEXPECTED_FILE') {
       status = 400;
-      message = 'Unexpected file field. Upload a single image using the "file" field.';
+      message = 'Unexpected file field. Upload a single image.';
     } else {
       status = 400;
       message = `Upload error: ${error.message}`;

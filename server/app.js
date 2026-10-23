@@ -9,6 +9,11 @@ const { config } = require('./config');
 const authRoutes = require('./routes/auth');
 const scanRoutes = require('./routes/scans');
 const lotRoutes = require('./routes/lots');
+const manualRecordRoutes = require('./routes/manualRecords');
+const manualBatchRoutes = require('./routes/manualBatches');
+const manualPriceRoutes = require('./routes/manualPrices');
+const manualActivityRoutes = require('./routes/manualActivity');
+const verifyRoutes = require('./routes/verify');
 const systemRoutes = require('./routes/system');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { ensureUploadDir } = require('./utils/files');
@@ -62,6 +67,11 @@ function createApp() {
   app.use('/api/auth', authRoutes);
   app.use('/api/scans', scanRoutes);
   app.use('/api/lots', lotRoutes);
+  app.use('/api/manual/records', manualRecordRoutes);
+  app.use('/api/manual/batches', manualBatchRoutes);
+  app.use('/api/manual/prices', manualPriceRoutes);
+  app.use('/api/manual/activity', manualActivityRoutes);
+  app.use('/api/verify', verifyRoutes);
   app.use('/api', systemRoutes);
 
   app.get('/', (_req, res) => {

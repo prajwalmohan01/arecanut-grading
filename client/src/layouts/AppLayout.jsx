@@ -2,9 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
+  CalculatorIcon,
+  ClipboardIcon,
   CompareIcon,
   DashboardIcon,
   HistoryIcon,
+  ImageIcon,
+  LayersIcon,
   LeafIcon,
   LogoutIcon,
   MenuIcon,
@@ -14,25 +18,75 @@ import {
   SunIcon,
   UploadIcon,
   CloseIcon,
+  ClockIcon,
 } from '../components/Icons';
 
-const NAV_ITEMS = [
-  { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon },
-  { to: '/upload', label: 'New Prediction', icon: UploadIcon },
-  { to: '/history', label: 'History', icon: HistoryIcon },
-  { to: '/compare', label: 'Compare', icon: CompareIcon },
-  { to: '/performance', label: 'Model Performance', icon: PerformanceIcon },
-  { to: '/profile', label: 'Profile & Settings', icon: ProfileIcon },
+const NAV_GROUPS = [
+  {
+    label: 'AI grading',
+    items: [
+      { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon },
+      { to: '/upload', label: 'New prediction', icon: UploadIcon },
+      { to: '/history', label: 'Prediction history', icon: HistoryIcon },
+    ],
+  },
+  {
+    label: 'AI analysis',
+    items: [
+      { to: '/compare', label: 'Compare predictions', icon: CompareIcon },
+      { to: '/performance', label: 'Model performance', icon: PerformanceIcon },
+    ],
+  },
+  {
+    label: 'Manual grading',
+    items: [
+      { to: '/manual', label: 'Manual overview', icon: ClipboardIcon, end: true },
+      { to: '/manual/new', label: 'New manual record', icon: UploadIcon },
+      { to: '/manual/records', label: 'Manual records', icon: HistoryIcon },
+      { to: '/manual/batches', label: 'Batches', icon: LayersIcon },
+      { to: '/manual/gallery', label: 'Sample gallery', icon: ImageIcon },
+      { to: '/manual/calculator', label: 'Value calculator', icon: CalculatorIcon },
+      { to: '/manual/activity', label: 'Activity log', icon: ClockIcon },
+    ],
+  },
+  {
+    label: 'Account',
+    items: [{ to: '/profile', label: 'Profile & settings', icon: ProfileIcon }],
+  },
 ];
 
 const TITLES = {
   '/dashboard': { eyebrow: 'Overview', title: 'Quality dashboard' },
   '/upload': { eyebrow: 'New prediction', title: 'Grade a tray image' },
   '/history': { eyebrow: 'Records', title: 'Prediction history' },
+  '/lots': { eyebrow: 'Records', title: 'Upload lots' },
   '/compare': { eyebrow: 'Analysis', title: 'Compare predictions' },
   '/performance': { eyebrow: 'Model', title: 'Performance & verification' },
   '/profile': { eyebrow: 'Account', title: 'Profile & settings' },
+  '/manual': { eyebrow: 'Manual grading', title: 'Manual workspace' },
+  '/manual/new': { eyebrow: 'Manual grading', title: 'Add a manual record' },
+  '/manual/records': { eyebrow: 'Manual grading', title: 'Grading history' },
+  '/manual/batches': { eyebrow: 'Manual grading', title: 'Batch workspace' },
+  '/manual/compare': { eyebrow: 'Manual grading', title: 'Compare records' },
+  '/manual/gallery': { eyebrow: 'Manual grading', title: 'Sample gallery' },
+  '/manual/calculator': { eyebrow: 'Manual grading', title: 'Value calculator' },
+  '/manual/activity': { eyebrow: 'Manual grading', title: 'Activity log' },
 };
+
+function pageMeta(pathname) {
+  if (TITLES[pathname]) return TITLES[pathname];
+  if (pathname.startsWith('/manual/records/')) {
+    return { eyebrow: 'Manual grading · record', title: 'Grading record detail' };
+  }
+  if (pathname.startsWith('/manual/batches/')) {
+    return { eyebrow: 'Manual grading · batch', title: 'Batch detail' };
+  }
+  if (pathname.startsWith('/lots/')) {
+    return { eyebrow: 'Records', title: 'Upload lot detail' };
+  }
+  return { eyebrow: 'ARECANUT QUALITY GRADING SYSTEM', title: 'Workspace' };
+}
+
 
 function Brand() {
   return (
@@ -59,21 +113,31 @@ function SidebarContent({ onNavigate }) {
         <Brand />
       </div>
 
-      <nav className="flex-1 space-y-1 px-3" aria-label="Main navigation">
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon;
-          return (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              onClick={onNavigate}
-              className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
-            >
-              <Icon width={17} height={17} />
-              <span>{item.label}</span>
-            </NavLink>
-          );
-        })}
+      <nav className="no-scrollbar flex-1 space-y-1 overflow-y-auto px-3 pb-3" aria-label="Main navigation">
+        {NAV_GROUPS.map((group, groupIndex) => (
+          <div key={group.label} className={groupIndex === 0 ? '' : 'pt-4'}>
+            <p className="px-3 pb-1.5 text-[9px] font-bold uppercase tracking-[0.18em] text-muted">
+              {group.label}
+            </p>
+            <div className="space-y-1">
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.end}
+                    onClick={onNavigate}
+                    className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                  >
+                    <Icon width={17} height={17} />
+                    <span>{item.label}</span>
+                  </NavLink>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
       <div className="m-3 rounded-2xl border border-[color:var(--border)] bg-[color:var(--panel-soft)] p-3">
@@ -104,7 +168,8 @@ function SidebarContent({ onNavigate }) {
       </div>
 
       <p className="px-5 pb-5 text-[10px] leading-relaxed text-muted">
-        Automated estimates only. Not a certified commercial grade or laboratory test.
+        AI estimates and manual grades are decision-support only — not certified commercial grades
+        or laboratory tests.
       </p>
     </div>
   );
@@ -117,7 +182,7 @@ export default function AppLayout({ children }) {
   const [drawer, setDrawer] = useState(false);
   const [menu, setMenu] = useState(false);
   const menuRef = useRef(null);
-  const meta = TITLES[location.pathname] || { eyebrow: 'ARECANUT QUALITY GRADING SYSTEM', title: 'Workspace' };
+  const meta = pageMeta(location.pathname);
   const initial = (user?.displayName || user?.username || 'U').slice(0, 1).toUpperCase();
 
   useEffect(() => {

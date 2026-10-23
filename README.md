@@ -2,7 +2,9 @@
 
 MERN application for detecting and grading individual arecanuts in a tray image, with a
 preserved YOLOv8 detector, a processed/annotated image preview, prediction history, and a
-PDF report.
+PDF report. It also includes a separate manual grading workspace for user-assigned Grade A
+and Grade B records, batches, review and correction history, PDF/CSV reports, QR
+verification, and user-entered value calculations.
 
 The repository is self-contained: the trained weights (`ml_service/weights/best.pt`,
 6.25 MB) are committed, so a second PC can run inference by cloning and installing. No
@@ -69,11 +71,14 @@ checkpoint is active.
 ├── setup.sh                      # Portable one-time setup (Linux/macOS)
 ├── start.ps1                     # Root startup helper (PowerShell)
 ├── client/                       # React frontend
+│   └── src/pages/manual/         # Authenticated manual grading workspace
 ├── server/                       # Express API, MongoDB models, PDF generation
 │   ├── .env.example
-│   ├── routes/
+│   ├── routes/                   # AI, auth, manual grading, and public verification
 │   ├── services/
-│   ├── utils/pdf.js
+│   ├── utils/pdf.js              # AI report PDF
+│   ├── utils/manualPdf.js        # Manual record, batch, and assessment PDFs
+│   ├── tests/                    # node:test unit and in-memory MongoDB integration tests
 │   └── scripts/                  # admin bootstrap helpers
 ├── ml_service/
 │   ├── weights/best.pt           # Committed production model
@@ -267,6 +272,49 @@ The frontend proxies `/api` and `/uploads` to `http://localhost:5000` in develop
   followed by a blank line and the per-prediction table.
 
 No training runs at startup or during prediction.
+
+### Manual grading workspace
+
+Open **Manual** in the sidebar, or go to `/manual`. This workspace is independent of the AI
+model: it never predicts, infers, or fabricates a grade, measurement, price, or quality
+result.
+
+- **Records** (`/manual/new`, `/manual/records`) store an uploaded image, optional sample
+  code, quantity, weight, size, appearance/condition, grading date, reviewer, observations,
+  and notes. A completed record requires the person to choose **Grade A** or **Grade B**.
+  Drafts can be resumed later.
+- **Image checks** use browser canvas heuristics for dimensions, brightness, and blur. They
+  are advisory only, recorded as metadata, and never assign a grade. Images are served only
+  through the authenticated owner's record endpoint.
+- **Duplicate handling** compares the SHA-256 content of the uploaded file. An exact
+  duplicate returns HTTP `409` with a link to the existing record. The uploader can
+  deliberately override the warning; visually similar but different photos are not treated
+  as duplicates.
+- **Batches** (`/manual/batches`) group samples from one collection and show target/progress
+  values based only on stored records. Deleting a batch keeps its records, removes their
+  live batch link, and preserves the batch ID/name snapshot on each record. Explicitly
+  unassigning a record clears its live snapshot.
+- **Review and corrections** store who reviewed the record, review notes, image flags, and a
+  field-by-field correction history. Correcting a grade records the reason and marks the
+  record for review again.
+- **Search, filters, sorting, and pagination** are available on records, batches, prices, and
+  the sample gallery. The gallery shows only authenticated images; the comparison view
+  accepts exactly two records.
+- **Reports** include record PDF/CSV, batch PDF/CSV, and filtered record/price CSV exports.
+  Empty values remain empty and every report states that grades were manually assigned.
+- **Value calculator** (`/manual/calculator`) multiplies a user-entered weight by a
+  user-entered INR price per kilogram. The app does not fetch live market prices and does
+  not invent a price when none is entered.
+- **Digital assessments** can be created for graded records. The assessment PDF contains a
+  QR code and verification link for `/verify/:token`. The public response intentionally
+  omits images, notes, supplier details, reviewer/account details, and correction history.
+  It is a record-verification aid, not an accredited certificate.
+- **Activity** (`/manual/activity`) is a read-only, user-scoped audit trail of manual
+  creates, updates, reviews, corrections, exports, assessments, batch changes, and price
+  records.
+
+The manual module adds no admin dashboard, language switcher, AI inference, or automated
+grading controls.
 
 ## Inference settings for dense images
 
@@ -473,7 +521,10 @@ checkpoint genuinely contains `GradeC`/`GradeD`.
 
 ## API summary
 
-All scan endpoints require `Authorization: Bearer <token>`.
+All endpoints require `Authorization: Bearer <token>` except signup, login, health, and the
+deliberately limited public assessment verification endpoint.
+
+### AI scan and lot endpoints
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
@@ -504,9 +555,45 @@ Lot valuation uses this formula per grade, then sums the result:
 estimated value = detected nuts × avgNutWeightG ÷ 1000 × pricePerKg
 ```
 
+### Manual grading endpoints
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/manual/records` | Create a record (multipart field `image`; optional `allowDuplicate=true`) |
+| `GET` | `/api/manual/records` | List/filter records with pagination and stored-value summary |
+| `GET` | `/api/manual/records/:id` | Record detail, image URL, review, and correction history |
+| `PATCH` | `/api/manual/records/:id` | Edit fields, grade, batch assignment, or add a correction reason |
+| `DELETE` | `/api/manual/records/:id` | Delete the record and its upload |
+| `GET` | `/api/manual/records/:id/image` | Authenticated record image |
+| `POST` | `/api/manual/records/:id/review` | Save human review state and notes |
+| `POST` | `/api/manual/records/:id/assessment` | Create/reissue a digital assessment and verification URL |
+| `GET` | `/api/manual/records/:id/report.pdf` | Manual record PDF |
+| `GET` | `/api/manual/records/:id/assessment.pdf` | Assessment PDF with QR code |
+| `GET` | `/api/manual/records/export.csv` | Filtered manual record CSV |
+| `GET` | `/api/manual/records/compare` | Compare exactly two record IDs (`ids=id1,id2`) |
+| `GET` | `/api/manual/records/duplicates` | Exact SHA-256 duplicate groups |
+| `POST` | `/api/manual/batches` | Create a manual batch |
+| `GET` | `/api/manual/batches` | List/filter batches with progress |
+| `GET` | `/api/manual/batches/:id` | Batch summary plus assigned records |
+| `PATCH` | `/api/manual/batches/:id` | Update batch fields/status |
+| `DELETE` | `/api/manual/batches/:id` | Delete batch, keep and unassign records, preserve snapshots |
+| `GET` | `/api/manual/batches/:id/report.pdf` | Manual batch PDF |
+| `GET` | `/api/manual/batches/:id/export.csv` | Manual batch CSV |
+| `POST` | `/api/manual/prices` | Save a user-entered weight/price calculation |
+| `GET` | `/api/manual/prices` | List/filter price records and INR summary |
+| `DELETE` | `/api/manual/prices/:id` | Delete a price record |
+| `GET` | `/api/manual/prices/export.csv` | Price record CSV |
+| `GET` | `/api/manual/activity` | Read-only, user-scoped manual activity log |
+| `GET` | `/api/verify/:token` | Public, limited assessment verification; no auth required |
+
+Manual list responses use `{ items, pagination, summary }`; record detail returns
+`{ record }`; batch detail returns `{ batch, records, pagination }`; duplicate groups use
+`{ groups }`. The public verification response contains assessment identifiers, the manual
+grade, status, batch code, grading date, review flag, and issue date only.
+
 ## PDF report
 
-`server/utils/pdf.js` produces an A4 report with:
+`server/utils/pdf.js` produces an A4 AI scan report with:
 
 - original image,
 - processed model-input preview and annotated detection image,
@@ -520,14 +607,27 @@ estimated value = detected nuts × avgNutWeightG ÷ 1000 × pricePerKg
 The footer is drawn inside the bottom margin with the margin temporarily disabled so
 PDFKit does not append blank pages.
 
+`server/utils/manualPdf.js` produces the separate manual reports:
+
+- a record report with the stored details, manual grade, review state, image, and a
+  manual-assignment notice;
+- a batch report with progress and assigned-record data;
+- an assessment report with the record summary, QR code, verification URL, and explicit
+  "not an accredited certificate" notice.
+
 ## Testing and verification
 
 ```powershell
 # Model checksum
 python scripts\verify_model.py
 
-# Server syntax
+# Server unit + integration suite (uses an isolated in-memory MongoDB)
 cd server
+npm test
+npm run test:unit
+npm run test:integration
+
+# Server syntax
 node --check index.js
 node --check app.js
 cd ..
@@ -537,6 +637,14 @@ cd client
 npm run build
 cd ..
 ```
+
+The server suite contains 10 unit tests for validation/summary/CSV safety and a 17-step
+HTTP integration workflow covering authentication, uploads, duplicate rejection and
+override, filters, comparison, review, corrections, batch unassignment/deletion snapshots,
+PDF/CSV reports, QR/public verification, prices, and activity. The integration workflow uses
+`mongodb-memory-server` and a temporary upload directory, so it does not read or modify the
+application's configured MongoDB database. The MongoDB test binary is cached under
+`server/node_modules/.cache/mongodb-memory-server/` after the first download.
 
 ## Troubleshooting
 
@@ -573,6 +681,19 @@ cd ..
 - Confidence and quality scores are documented heuristics/aggregates, not calibrated
   probabilities or laboratory grades.
 - Reports are automated estimates, not certified commercial grading.
+- Manual grades are intentionally limited to Grade A or Grade B and are selected by the
+  user; the application does not validate the physical quality of a sample.
+- Manual image-quality checks are browser heuristics. They can miss blur, glare, or poor
+  lighting and are never used to assign or change a grade.
+- Manual duplicate detection compares exact SHA-256 file content only. Re-encoded,
+  resized, or visually similar images are not detected as duplicates.
+- The value calculator uses only the weight and INR price entered by the user. No live
+  market price, grading standard, or guaranteed valuation is provided.
+- Public assessment verification proves that an application-generated assessment exists
+  and matches the stored manual grade. It is not an official certificate, and the
+  verification token must be treated as sensitive.
+- The automated server suite does not include a headless-browser visual regression test;
+  responsive layouts are covered by the production build and manual UI review.
 
 ## Security notes
 
@@ -580,3 +701,6 @@ cd ..
 - Change the example `JWT_SECRET` and admin password before sharing a deployment.
 - Passwords are hashed with bcrypt and never logged.
 - The API validates uploaded files by type and size and isolates scans per user.
+- Manual records, images, corrections, price records, and activity are scoped to the
+  authenticated owner. Public assessment verification deliberately excludes images, notes,
+  supplier details, and account information.
