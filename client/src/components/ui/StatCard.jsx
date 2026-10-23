@@ -11,12 +11,14 @@ export default function StatCard({ label, value, hint, icon, tone = 'default', c
   return (
     <div className={`card p-5 ${className}`}>
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">{label}</p>
-          <p className="stat-value mt-2" style={{ color: toneStyles.color }}>
+        <div className="min-w-0">
+          <p className="break-words text-[10px] font-bold uppercase tracking-[0.16em] text-muted">
+            {label}
+          </p>
+          <p className="stat-value mt-2 break-words" style={{ color: toneStyles.color }}>
             {value}
           </p>
-          {hint && <p className="mt-1.5 text-xs text-muted">{hint}</p>}
+          {hint && <p className="mt-1.5 break-words text-xs text-muted">{hint}</p>}
         </div>
         {icon && (
           <span

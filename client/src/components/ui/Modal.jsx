@@ -35,16 +35,16 @@ export default function Modal({ open, onClose, title, description, children, foo
         aria-labelledby="modal-title"
       >
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 id="modal-title" className="font-display text-xl font-semibold text-main">
+          <div className="min-w-0">
+            <h2 id="modal-title" className="break-words font-display text-xl font-semibold text-main">
               {title}
             </h2>
-            {description && <p className="mt-1 text-sm text-muted">{description}</p>}
+            {description && <p className="mt-1 break-words text-sm text-muted">{description}</p>}
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="btn-ghost !p-2"
+            className="btn-ghost !p-2 shrink-0"
             aria-label="Close dialog"
           >
             <CloseIcon />

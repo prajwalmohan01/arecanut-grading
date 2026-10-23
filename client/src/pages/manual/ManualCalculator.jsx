@@ -445,7 +445,7 @@ export default function ManualCalculator() {
               />
             ) : (
               <>
-                <div className="table-shell hidden lg:block">
+                <div className="table-shell hidden xl:block">
                   <table className="data-table">
                     <thead>
                       <tr>
@@ -499,7 +499,7 @@ export default function ManualCalculator() {
                   </table>
                 </div>
 
-                <div className="divide-y divide-[color:var(--border)] lg:hidden">
+                <div className="divide-y divide-[color:var(--border)] xl:hidden">
                   {items.map((record) => (
                     <div key={record.id} className="p-4">
                       <div className="flex items-start justify-between gap-2">
@@ -513,20 +513,22 @@ export default function ManualCalculator() {
                         </div>
                         <ManualGradeBadge grade={record.grade} />
                       </div>
-                      <div className="mt-2 grid grid-cols-3 gap-2 rounded-xl bg-[color:var(--panel-soft)] p-2 text-center text-[11px]">
-                        <div>
+                      <div className="mt-2 grid grid-cols-3 gap-2 rounded-xl bg-[color:var(--panel-soft)] p-2 text-center text-[10px] sm:text-[11px]">
+                        <div className="min-w-0">
                           <p className="text-[9px] uppercase tracking-[0.1em] text-muted">Weight</p>
-                          <p className="mt-0.5 font-semibold text-main">{formatWeightKg(record.weightKg)}</p>
+                          <p className="mt-0.5 break-words font-semibold leading-tight text-main">
+                            {formatWeightKg(record.weightKg)}
+                          </p>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-[9px] uppercase tracking-[0.1em] text-muted">Price/kg</p>
-                          <p className="mt-0.5 font-semibold text-main">
+                          <p className="mt-0.5 break-words font-semibold leading-tight text-main">
                             {formatMoney(record.pricePerKg, record.currency)}
                           </p>
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-[9px] uppercase tracking-[0.1em] text-muted">Value</p>
-                          <p className="mt-0.5 font-semibold text-main">
+                          <p className="mt-0.5 break-words font-semibold leading-tight text-main">
                             {formatMoney(record.value, record.currency)}
                           </p>
                         </div>

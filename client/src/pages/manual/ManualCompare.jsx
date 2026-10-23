@@ -327,8 +327,8 @@ export default function ManualCompare() {
           </div>
         ) : (
           <div className="divide-y divide-[color:var(--border)]">
-            <div className="grid grid-cols-[minmax(7rem,0.7fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 bg-[color:var(--panel-soft)] px-4 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-muted">
-              <span>Field</span>
+            <div className="grid grid-cols-2 gap-2 bg-[color:var(--panel-soft)] px-4 py-2.5 text-[10px] font-bold uppercase tracking-[0.12em] text-muted sm:grid-cols-[minmax(7rem,0.7fr)_minmax(0,1fr)_minmax(0,1fr)]">
+              <span className="col-span-2 sm:col-span-1">Field</span>
               <span className="truncate">{records[0].sampleCode || records[0].reportId}</span>
               <span className="truncate">{records[1].sampleCode || records[1].reportId}</span>
             </div>
@@ -337,18 +337,18 @@ export default function ManualCompare() {
               return (
                 <div
                   key={field.key}
-                  className={`grid grid-cols-[minmax(7rem,0.7fr)_minmax(0,1fr)_minmax(0,1fr)] gap-2 px-4 py-3 text-xs ${
+                  className={`grid grid-cols-2 gap-2 px-4 py-3 text-xs sm:grid-cols-[minmax(7rem,0.7fr)_minmax(0,1fr)_minmax(0,1fr)] ${
                     different ? 'bg-[color:var(--warn-soft)]' : ''
                   }`}
                 >
-                  <span className="font-semibold text-muted">
+                  <span className="col-span-2 font-semibold text-muted sm:col-span-1">
                     {field.label}
                     {different && <span className="ml-1 text-[color:var(--warn)]">•</span>}
                   </span>
-                  <span className="text-main">
+                  <span className="min-w-0 break-words text-main">
                     <CompareValue field={field.key} record={records[0]} />
                   </span>
-                  <span className="text-main">
+                  <span className="min-w-0 break-words text-main">
                     <CompareValue field={field.key} record={records[1]} />
                   </span>
                 </div>

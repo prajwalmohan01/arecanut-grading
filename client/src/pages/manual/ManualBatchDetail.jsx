@@ -214,15 +214,17 @@ export default function ManualBatchDetail() {
       <div className="space-y-5">
         <Card className="p-5 animate-in">
           <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
-            <div>
+            <div className="min-w-0">
               <Link to="/manual/batches" className="link inline-flex items-center gap-1.5 text-xs">
                 <ArrowLeftIcon width={14} height={14} /> Manual batches
               </Link>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <h2 className="font-display text-2xl font-semibold text-main">{batch.name}</h2>
+                <h2 className="min-w-0 break-words font-display text-2xl font-semibold text-main">
+                  {batch.name}
+                </h2>
                 <BatchStatusBadge status={batch.status} />
               </div>
-              <p className="mt-1 text-xs text-muted">
+              <p className="mt-1 break-words text-xs text-muted">
                 {batch.batchId} · created {formatDateTime(batch.createdAt)} · updated{' '}
                 {formatDateTime(batch.updatedAt)}
               </p>
@@ -332,7 +334,7 @@ export default function ManualBatchDetail() {
               />
             ) : (
               <>
-                <div className="table-shell hidden lg:block">
+                <div className="table-shell hidden xl:block">
                   <table className="data-table">
                     <thead>
                       <tr>
@@ -380,7 +382,7 @@ export default function ManualBatchDetail() {
                   </table>
                 </div>
 
-                <div className="divide-y divide-[color:var(--border)] lg:hidden">
+                <div className="divide-y divide-[color:var(--border)] xl:hidden">
                   {records.map((record) => (
                     <div key={record.id} className="p-4">
                       <Link to={`/manual/records/${record.id}`} className="text-sm font-semibold text-main">
@@ -478,7 +480,9 @@ export default function ManualBatchDetail() {
                   <dt className="flex items-center gap-1.5 text-muted">
                     <UsersIcon width={13} height={13} /> Supplier
                   </dt>
-                  <dd className="max-w-[13rem] text-right text-main">{batch.supplier || '—'}</dd>
+                  <dd className="min-w-0 max-w-[13rem] break-words text-right text-main">
+                    {batch.supplier || '—'}
+                  </dd>
                 </div>
                 <div className="flex items-start justify-between gap-3">
                   <dt className="flex items-center gap-1.5 text-muted">

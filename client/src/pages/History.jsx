@@ -86,11 +86,11 @@ function FilterBar({ draft, setDraft, onApply, onReset, loading }) {
           min={draft.from || undefined}
           onChange={(event) => setDraft({ ...draft, to: event.target.value })}
         />
-        <div className="flex items-end gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end md:col-span-2 xl:col-span-1">
           <SelectField
             id="history-sort"
             label="Sort"
-            className="flex-1"
+            className="min-w-0 flex-1"
             value={draft.sort}
             onChange={(event) => setDraft({ ...draft, sort: event.target.value })}
           >
@@ -99,18 +99,20 @@ function FilterBar({ draft, setDraft, onApply, onReset, loading }) {
             <option value="confidence">Highest confidence</option>
             <option value="grade">Grade A → D</option>
           </SelectField>
-          <Button type="submit" disabled={loading} className="mb-0.5">
-            {loading ? <Spinner size={15} /> : 'Apply'}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={onReset}
-            disabled={loading}
-            className="mb-0.5"
-            title="Reset filters"
-          >
-            Reset
-          </Button>
+          <div className="grid grid-cols-2 gap-2 sm:flex">
+            <Button type="submit" disabled={loading} className="sm:mb-0.5">
+              {loading ? <Spinner size={15} /> : 'Apply'}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={onReset}
+              disabled={loading}
+              className="sm:mb-0.5"
+              title="Reset filters"
+            >
+              Reset
+            </Button>
+          </div>
         </div>
       </form>
     </Card>
@@ -377,7 +379,7 @@ export default function History() {
           />
         ) : (
           <>
-            <div className="table-shell hidden md:block">
+            <div className="table-shell hidden xl:block">
               <table className="data-table">
                 <thead>
                   <tr>
@@ -502,7 +504,7 @@ export default function History() {
               </table>
             </div>
 
-            <div className="divide-y divide-[color:var(--border)] md:hidden">
+            <div className="divide-y divide-[color:var(--border)] xl:hidden">
               {items.map((scan) => {
                 const isSelected = Boolean(selected[scan.id]);
                 const supported = supportedGradeLetters(scan);

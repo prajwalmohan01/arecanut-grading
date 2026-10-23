@@ -206,7 +206,7 @@ export default function ManualRecords() {
   );
 
   return (
-    <div className="space-y-5">
+    <div className={`space-y-5 ${selectedIds.length === 2 ? 'pb-28' : ''}`}>
       <Card className="p-5 animate-in">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
           <div>
@@ -432,7 +432,7 @@ export default function ManualRecords() {
           />
         ) : (
           <>
-            <div className="table-shell hidden lg:block">
+            <div className="table-shell hidden xl:block">
               <table className="data-table">
                 <thead>
                   <tr>
@@ -521,7 +521,7 @@ export default function ManualRecords() {
               </table>
             </div>
 
-            <div className="divide-y divide-[color:var(--border)] lg:hidden">
+            <div className="divide-y divide-[color:var(--border)] xl:hidden">
               {items.map((record) => (
                 <div key={record.id} className="p-4">
                   <div className="flex items-start gap-3">
@@ -533,7 +533,7 @@ export default function ManualRecords() {
                       aria-label={`Select ${record.reportId} for comparison`}
                     />
                     <div className="min-w-0 flex-1">
-                      <Link to={`/manual/records/${record.id}`} className="truncate text-sm font-semibold text-main">
+                      <Link to={`/manual/records/${record.id}`} className="block truncate text-sm font-semibold text-main">
                         {record.sampleCode || record.reportId}
                       </Link>
                       <p className="mt-0.5 truncate text-[11px] text-muted">

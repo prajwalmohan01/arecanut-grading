@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import Navbar from '../components/Navbar';
 import { LeafIcon, SparkIcon, UploadIcon, PerformanceIcon, HistoryIcon, CompareIcon, DownloadIcon, ArrowRightIcon } from '../components/Icons';
 
 const capabilities = [
@@ -45,19 +44,17 @@ const limitations = [
 export default function Home() {
   return (
     <div className="min-h-screen">
-      <Navbar />
-
-      <section className="relative overflow-hidden px-4 pb-20 pt-16 sm:px-6 lg:pb-28 lg:pt-24">
+      <section className="relative overflow-hidden px-4 pb-16 pt-8 sm:px-6 sm:pb-20 sm:pt-12 lg:pb-24 lg:pt-16">
         <div className="pointer-events-none absolute -left-24 top-10 h-72 w-72 rounded-full bg-emerald-400/20 blur-3xl" />
         <div className="pointer-events-none absolute -right-16 top-40 h-80 w-80 rounded-full bg-gold-400/15 blur-3xl" />
 
-        <div className="relative mx-auto grid max-w-7xl items-center gap-12 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="relative mx-auto grid max-w-7xl items-center gap-12 xl:grid-cols-[1.1fr_0.9fr]">
           <div className="animate-in">
             <span className="pill">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               Deep-learning quality grading · preserved model
             </span>
-            <h1 className="mt-6 max-w-2xl font-display text-5xl font-semibold leading-[1.03] text-main sm:text-6xl lg:text-7xl">
+            <h1 className="mt-6 max-w-2xl font-display text-5xl font-semibold leading-[1.03] text-main sm:text-6xl xl:text-7xl">
               Clearer arecanut
               <span className="block bg-gradient-to-r from-forest-600 via-emerald-500 to-gold-500 bg-clip-text text-transparent">
                 quality signals.
@@ -87,9 +84,11 @@ export default function Home() {
                 ['CPU', 'Inference ready'],
                 ['SHA-256', 'Weights verified'],
               ].map(([value, label]) => (
-                <div key={label} className="surface-soft rounded-2xl p-3.5">
-                  <p className="font-display text-xl font-semibold text-main">{value}</p>
-                  <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted">
+                <div key={label} className="surface-soft min-w-0 rounded-2xl p-3 sm:p-3.5">
+                  <p className="break-words font-display text-base font-semibold leading-tight text-main sm:text-xl">
+                    {value}
+                  </p>
+                  <p className="mt-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wider text-muted sm:text-[10px]">
                     {label}
                   </p>
                 </div>
@@ -125,9 +124,13 @@ export default function Home() {
                   ['Quality', 'heuristic'],
                   ['Defects', 'not supported'],
                 ].map(([label, note]) => (
-                  <div key={label} className="surface-soft rounded-xl p-2.5 text-center">
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-muted">{label}</p>
-                    <p className="mt-0.5 text-[11px] font-semibold text-main">{note}</p>
+                  <div key={label} className="surface-soft min-w-0 rounded-xl p-2 text-center sm:p-2.5">
+                    <p className="break-words text-[9px] font-bold uppercase leading-tight tracking-wide text-muted sm:text-[10px]">
+                      {label}
+                    </p>
+                    <p className="mt-0.5 break-words text-[10px] font-semibold leading-tight text-main sm:text-[11px]">
+                      {note}
+                    </p>
                   </div>
                 ))}
               </div>

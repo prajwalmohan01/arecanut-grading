@@ -327,7 +327,7 @@ export default function ManualBatches() {
                 const progress = progressFor(batch);
                 const stats = batch.stats || {};
                 return (
-                  <Card key={batch.id} className="flex flex-col p-5 transition hover:shadow-[var(--shadow)]">
+                  <Card key={batch.id} className="flex min-w-0 flex-col p-5 transition hover:shadow-[var(--shadow)]">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted">

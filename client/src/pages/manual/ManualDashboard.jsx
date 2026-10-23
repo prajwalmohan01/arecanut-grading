@@ -309,7 +309,7 @@ export default function ManualDashboard() {
             </Card>
           ) : (
             <div className="grid gap-5 xl:grid-cols-3">
-              <Card className="p-5 xl:col-span-2">
+              <Card className="min-w-0 p-5 xl:col-span-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h3 className="font-display text-xl font-semibold text-main">Recent manual records</h3>
@@ -356,7 +356,7 @@ export default function ManualDashboard() {
                 </div>
               </Card>
 
-              <Card className="p-5">
+              <Card className="min-w-0 p-5">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <h3 className="font-display text-xl font-semibold text-main">Grade mix</h3>
@@ -397,7 +397,7 @@ export default function ManualDashboard() {
           )}
 
           <div className="grid gap-5 xl:grid-cols-2">
-            <Card className="p-5">
+            <Card className="min-w-0 p-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h3 className="font-display text-xl font-semibold text-main">Batches in progress</h3>
@@ -456,7 +456,7 @@ export default function ManualDashboard() {
               )}
             </Card>
 
-            <Card className="p-5">
+            <Card className="min-w-0 p-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h3 className="font-display text-xl font-semibold text-main">Recent activity</h3>

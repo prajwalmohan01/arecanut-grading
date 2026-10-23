@@ -117,11 +117,11 @@ export default function Profile() {
         >
           {initial}
         </span>
-        <div>
-          <h2 className="font-display text-2xl font-semibold text-main">
+        <div className="min-w-0">
+          <h2 className="break-words font-display text-2xl font-semibold text-main">
             {user?.displayName || user?.username}
           </h2>
-          <p className="mt-1 text-sm text-muted">
+          <p className="mt-1 break-words text-sm text-muted">
             @{user?.username} · {user?.email || 'No email added'} · Role: {user?.role || 'user'}
           </p>
         </div>
@@ -191,9 +191,9 @@ export default function Profile() {
               >
                 <SunIcon width={18} height={18} />
               </span>
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-main">Light</p>
-                <p className="text-xs text-muted">Clean glass look for bright spaces</p>
+                <p className="break-words text-xs text-muted">Clean glass look for bright spaces</p>
               </div>
               {theme === 'light' && <CheckIcon width={16} height={16} style={{ color: 'var(--accent)' }} />}
             </button>
@@ -212,9 +212,9 @@ export default function Profile() {
               >
                 <MoonIcon width={18} height={18} />
               </span>
-              <div className="flex-1">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-main">Dark</p>
-                <p className="text-xs text-muted">Lower glare for low-light sessions</p>
+                <p className="break-words text-xs text-muted">Lower glare for low-light sessions</p>
               </div>
               {theme === 'dark' && <CheckIcon width={16} height={16} style={{ color: 'var(--accent)' }} />}
             </button>
@@ -276,8 +276,8 @@ export default function Profile() {
       </Section>
 
       <Card className="flex items-start gap-3 p-4 text-xs leading-relaxed text-muted animate-in">
-        <ProfileIcon width={17} height={17} className="mt-0.5" />
-        <p>
+        <ProfileIcon width={17} height={17} className="mt-0.5 shrink-0" />
+        <p className="min-w-0 break-words">
           © 2026 Prajwal Mohan | Arecanut Quality Grading System | AI-Powered Detection & Grading | Contact: +91 76767 59149
         </p>
       </Card>

@@ -341,19 +341,19 @@ export default function ManualRecordDetail() {
       <div className="space-y-5">
         <Card className="p-5 animate-in">
           <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
-            <div>
+            <div className="min-w-0">
               <Link to="/manual/records" className="link inline-flex items-center gap-1.5 text-xs">
                 <ArrowLeftIcon width={14} height={14} /> Manual records
               </Link>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <h2 className="font-display text-2xl font-semibold text-main">
+                <h2 className="min-w-0 break-words font-display text-2xl font-semibold text-main">
                   {record.sampleCode || record.reportId}
                 </h2>
                 <ManualGradeBadge grade={record.grade} />
                 <RecordStatusBadge status={record.status} />
                 <ReviewBadge review={record.review} />
               </div>
-              <p className="mt-1 text-xs text-muted">
+              <p className="mt-1 break-words text-xs text-muted">
                 Record {record.reportId} · created {formatDateTime(record.createdAt)} · updated{' '}
                 {formatDateTime(record.updatedAt)}
               </p>

@@ -397,7 +397,7 @@ export default function ManualNew() {
                       alt="Selected arecanut grading preview"
                       className="max-h-[30rem] w-full object-contain"
                     />
-                    <div className="absolute right-2 top-2 flex gap-2">
+                    <div className="absolute right-2 top-2 flex max-w-[calc(100%-1rem)] flex-wrap justify-end gap-2">
                       <Button
                         type="button"
                         variant="secondary"

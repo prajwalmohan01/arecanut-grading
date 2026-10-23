@@ -56,7 +56,9 @@ const NAV_GROUPS = [
 ];
 
 const TITLES = {
+  '/home': { eyebrow: 'Overview', title: 'Welcome back' },
   '/dashboard': { eyebrow: 'Overview', title: 'Quality dashboard' },
+  '/result': { eyebrow: 'Prediction', title: 'Grading result' },
   '/upload': { eyebrow: 'New prediction', title: 'Grade a tray image' },
   '/history': { eyebrow: 'Records', title: 'Prediction history' },
   '/lots': { eyebrow: 'Records', title: 'Upload lots' },
@@ -84,19 +86,24 @@ function pageMeta(pathname) {
   if (pathname.startsWith('/lots/')) {
     return { eyebrow: 'Records', title: 'Upload lot detail' };
   }
+  if (pathname.startsWith('/result/')) {
+    return { eyebrow: 'Prediction', title: 'Grading result' };
+  }
   return { eyebrow: 'ARECANUT QUALITY GRADING SYSTEM', title: 'Workspace' };
 }
 
 
 function Brand() {
   return (
-    <div className="flex items-center gap-3">
-      <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-forest-600 to-emerald-600 text-white shadow-lg shadow-forest-900/20">
+    <div className="flex min-w-0 items-center gap-3">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-forest-600 to-emerald-600 text-white shadow-lg shadow-forest-900/20">
         <LeafIcon width={20} height={20} />
       </span>
-      <div className="leading-tight">
-        <p className="font-display text-lg font-semibold text-main">ARECANUT QUALITY GRADING SYSTEM</p>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted"></p>
+      <div className="min-w-0 leading-tight">
+        <p className="truncate font-display text-base font-semibold text-main">ARECANUT QUALITY</p>
+        <p className="truncate text-[9px] font-semibold uppercase tracking-[0.16em] text-muted">
+          Grading system
+        </p>
       </div>
     </div>
   );
@@ -200,7 +207,7 @@ export default function AppLayout({ children }) {
 
   return (
     <div className="min-h-screen">
-      <aside className="surface fixed inset-y-0 left-0 z-40 hidden w-72 rounded-none border-y-0 border-l-0 lg:block">
+      <aside className="surface fixed inset-y-0 left-0 z-40 hidden w-64 rounded-none border-y-0 border-l-0 lg:block xl:w-72">
         <SidebarContent />
       </aside>
 
@@ -225,7 +232,7 @@ export default function AppLayout({ children }) {
         </div>
       )}
 
-      <div className="lg:pl-72">
+      <div className="lg:pl-64 xl:pl-72">
         <header
           className="sticky top-0 z-30 border-b border-[color:var(--border)] backdrop-blur-xl"
           style={{ background: 'color-mix(in srgb, var(--bg) 78%, transparent)' }}

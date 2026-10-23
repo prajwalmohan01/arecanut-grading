@@ -64,14 +64,13 @@ export default function Signup() {
               'radial-gradient(circle at 70% 20%, rgba(98,197,150,0.35), transparent 38%), radial-gradient(circle at 20% 80%, rgba(216,180,106,0.25), transparent 35%)',
           }}
         />
-        <div className="relative flex items-center gap-3 text-white">
-          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-white/10 backdrop-blur">
+        <div className="relative flex min-w-0 items-center gap-3 text-white">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/10 backdrop-blur">
             <LeafIcon width={21} height={21} />
           </span>
-          <div>
-            <p className="font-display text-xl font-semibold">ARECANUT QUALITY GRADING SYSTEM</p>
-            <p className="text-[10px] uppercase tracking-[0.2em] text-forest-200">Arecanut AI</p>
-          </div>
+          <p className="min-w-0 break-words font-display text-xl font-semibold leading-tight">
+            ARECANUT QUALITY GRADING SYSTEM
+          </p>
         </div>
 
         <div className="relative max-w-lg text-white">
@@ -106,11 +105,13 @@ export default function Signup() {
 
       <div className="flex items-center justify-center px-4 py-12 sm:px-8">
         <div className="w-full max-w-md animate-in">
-          <div className="mb-8 flex items-center gap-3 lg:hidden">
-            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-forest-600 to-emerald-600 text-white">
+          <div className="mb-8 flex min-w-0 items-center gap-3 lg:hidden">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-forest-600 to-emerald-600 text-white">
               <LeafIcon width={19} height={19} />
             </span>
-            <span className="font-display text-xl font-semibold text-main">ARECANUT QUALITY GRADING SYSTEM</span>
+            <span className="min-w-0 break-words font-display text-base font-semibold leading-tight text-main sm:text-xl">
+              ARECANUT QUALITY GRADING SYSTEM
+            </span>
           </div>
 
           <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-accent">Create account</p>
