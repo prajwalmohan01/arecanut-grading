@@ -27,7 +27,12 @@ import {
   SparkIcon,
   UploadIcon,
 } from '../components/Icons';
-import { formatDateTime, formatNumber, formatPercent } from '../utils/format';
+import {
+  formatDateTime,
+  formatNumber,
+  formatPercent,
+  supportedGradeLetters,
+} from '../utils/format';
 import { baseChartOptions, chartTheme } from '../utils/charts';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend);
@@ -323,6 +328,10 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+              <p className="mt-2 text-[11px] leading-relaxed text-muted">
+                Grade C/D stay at zero unless the active checkpoint contains GradeC/GradeD
+                classes. They are never inferred from A/B detections.
+              </p>
             </Card>
           </div>
 
@@ -367,8 +376,10 @@ export default function Dashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.recent.map((scan) => (
-                      <tr key={scan.id}>
+                    {data.recent.map((scan) => {
+                      const supported = supportedGradeLetters(scan);
+                      return (
+                        <tr key={scan.id}>
                         <td>
                           <Link to={`/result/${scan.id}`} className="font-semibold text-main hover:text-accent">
                             {scan.reportId || scan.filename}
@@ -387,12 +398,20 @@ export default function Dashboard() {
                             {scan.gradeB}
                           </span>{' '}
                           /{' '}
-                          <span className="font-semibold" style={{ color: '#c77a2e' }}>
-                            {scan.gradeC || 0}
+                          <span
+                            className="font-semibold"
+                            style={{ color: '#c77a2e' }}
+                            title={supported.includes('C') ? undefined : 'Not evaluated by this model'}
+                          >
+                            {supported.includes('C') ? scan.gradeC || 0 : '—'}
                           </span>{' '}
                           /{' '}
-                          <span className="font-semibold" style={{ color: '#8f2f2f' }}>
-                            {scan.gradeD || 0}
+                          <span
+                            className="font-semibold"
+                            style={{ color: '#8f2f2f' }}
+                            title={supported.includes('D') ? undefined : 'Not evaluated by this model'}
+                          >
+                            {supported.includes('D') ? scan.gradeD || 0 : '—'}
                           </span>
                         </td>
                         <td className="text-sm text-main">
@@ -412,8 +431,9 @@ export default function Dashboard() {
                             <ArrowRightIcon width={14} height={14} />
                           </button>
                         </td>
-                      </tr>
-                    ))}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

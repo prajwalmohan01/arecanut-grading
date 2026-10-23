@@ -24,6 +24,7 @@ import {
   formatDateTime,
   formatNumber,
   formatPercent,
+  supportedGradeLetters,
 } from '../utils/format';
 
 const EMPTY_FILTERS = { q: '', grade: '', from: '', to: '', sort: 'newest' };
@@ -272,7 +273,7 @@ export default function History() {
         <StatCard
           label="Grade A / B / C / D"
           value={`${formatNumber(summary.gradeA || 0)} / ${formatNumber(summary.gradeB || 0)} / ${formatNumber(summary.gradeC || 0)} / ${formatNumber(summary.gradeD || 0)}`}
-          hint={`${formatNumber(summary.invalid || 0)} invalid image-level results`}
+          hint={`${formatNumber(summary.invalid || 0)} invalid · C/D require a four-class model`}
           tone="a"
         />
         <StatCard
@@ -365,6 +366,7 @@ export default function History() {
                 <tbody>
                   {items.map((scan) => {
                     const isSelected = Boolean(selected[scan.id]);
+                    const supported = supportedGradeLetters(scan);
                     return (
                       <tr key={scan.id}>
                         <td>
@@ -402,12 +404,20 @@ export default function History() {
                             {scan.gradeB}
                           </span>{' '}
                           /{' '}
-                          <span className="font-bold" style={{ color: '#c77a2e' }}>
-                            {scan.gradeC || 0}
+                          <span
+                            className="font-bold"
+                            style={{ color: '#c77a2e' }}
+                            title={supported.includes('C') ? undefined : 'Not evaluated by this model'}
+                          >
+                            {supported.includes('C') ? scan.gradeC || 0 : '—'}
                           </span>{' '}
                           /{' '}
-                          <span className="font-bold" style={{ color: '#8f2f2f' }}>
-                            {scan.gradeD || 0}
+                          <span
+                            className="font-bold"
+                            style={{ color: '#8f2f2f' }}
+                            title={supported.includes('D') ? undefined : 'Not evaluated by this model'}
+                          >
+                            {supported.includes('D') ? scan.gradeD || 0 : '—'}
                           </span>
                         </td>
                         <td className="text-sm text-main">{formatNumber(scan.totalCount)}</td>
@@ -466,6 +476,7 @@ export default function History() {
             <div className="divide-y divide-[color:var(--border)] md:hidden">
               {items.map((scan) => {
                 const isSelected = Boolean(selected[scan.id]);
+                const supported = supportedGradeLetters(scan);
                 return (
                   <div key={scan.id} className="p-4">
                     <div className="flex items-start gap-3">
@@ -493,7 +504,9 @@ export default function History() {
                           <span className="pill">{formatNumber(scan.totalCount)} nuts</span>
                         </div>
                         <p className="mt-2 text-[11px] text-muted">
-                          {formatDateTime(scan.createdAt)} · A {scan.gradeA} / B {scan.gradeB} / C {scan.gradeC || 0} / D {scan.gradeD || 0}
+                          {formatDateTime(scan.createdAt)} · A {scan.gradeA} / B {scan.gradeB} / C{' '}
+                          {supported.includes('C') ? scan.gradeC || 0 : '—'} / D{' '}
+                          {supported.includes('D') ? scan.gradeD || 0 : '—'}
                         </p>
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           <Button

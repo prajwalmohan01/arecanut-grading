@@ -6,7 +6,7 @@ PDF report.
 
 The repository is self-contained: the trained weights (`ml_service/weights/best.pt`,
 6.25 MB) are committed, so a second PC can run inference by cloning and installing. No
-retraining and no Kaggle download are required for normal use.
+retraining, no dataset download, and no Kaggle account are required for normal use.
 
 ## What the bundled model actually supports
 
@@ -20,12 +20,36 @@ retraining and no Kaggle download are required for normal use.
 | PDF report with original, annotated and processed images | Yes |
 
 Grade support is derived at runtime from the loaded checkpoint's own class names. The
-application is four-grade capable, but it will report C/D only when a promoted checkpoint
+application is four-grade capable, but it will report C/D only when an installed checkpoint
 actually contains `GradeC`/`GradeD` classes. It never relabels A/B predictions as C/D and
 never invents defects, measurements or confidence scores.
 
 The bundled model metadata is in `ml_service/model_metadata.json`, including the SHA-256
 checksum and documented limitations.
+
+## Quick start
+
+Prerequisites: Node.js 20+, Python 3.10–3.12, and MongoDB running locally (or an Atlas
+connection string).
+
+```powershell
+git clone https://github.com/Spandana-MJ/arecanut-grading.git
+cd arecanut-grading
+.\setup.ps1
+# Edit server\.env if you need a different MONGO_URI or JWT_SECRET.
+.\start.ps1
+```
+
+Open `http://localhost:5173`. On Linux/macOS use `bash setup.sh` instead of `setup.ps1`,
+then start the server and client in separate terminals as shown below.
+
+Both setup scripts resolve paths from the project folder. Nothing is tied to a particular
+user profile, drive letter, or installation directory. Normal startup never downloads a
+dataset, creates a Kaggle cache, or trains a model.
+
+The model support table above is authoritative: Grade C and Grade D are displayed in the
+UI for completeness, but are marked **not evaluated** while the bundled two-class
+checkpoint is active.
 
 ## Architecture
 
@@ -41,7 +65,9 @@ checksum and documented limitations.
 .
 ├── README.md
 ├── .gitignore
-├── start.ps1                     # Optional root startup helper (PowerShell)
+├── setup.ps1                     # Portable one-time setup (PowerShell)
+├── setup.sh                      # Portable one-time setup (Linux/macOS)
+├── start.ps1                     # Root startup helper (PowerShell)
 ├── client/                       # React frontend
 ├── server/                       # Express API, MongoDB models, PDF generation
 │   ├── .env.example
@@ -71,8 +97,9 @@ checksum and documented limitations.
 Raw datasets, Kaggle caches, training runs, candidate weights, backups and uploads are
 git-ignored and are never committed.
 
-All scripts resolve paths relative to the project root (or use `~` for the Kaggle cache),
-so no `C:\Users\...` path is required and the project can be moved to another PC.
+All scripts resolve paths relative to the project root (or use `~` for the optional Kaggle
+cache), so no machine-specific absolute path is required and the project can be cloned to
+any folder on another PC.
 
 ## Requirements
 
@@ -225,10 +252,12 @@ environment that starts the Flask service.
 Lower `MODEL_IMGSZ`, disable `MODEL_AUGMENT`, or disable `USE_TILED` on a slow CPU. Higher
 settings improve recall on dense trays but increase processing time.
 
-## Workflow A — One-time training (only when real labelled data exists)
+## Workflow A — Optional training reference (not needed to run)
 
-Training is a manual, explicit workflow. The application never trains on startup, never
-downloads datasets at runtime, and never promotes a model automatically.
+Normal installation and inference never train anything. This section documents the
+existing manual tooling for maintainers who later obtain a genuine four-grade labelled
+dataset. The application never trains on startup, never downloads datasets at runtime,
+and never promotes a model automatically.
 
 ### Reality check: what the public datasets contain
 
@@ -251,10 +280,12 @@ GradeC/GradeD head. Their `class_0` … `class_6` folders are opaque; this proje
 guess their meanings or map them to grades. The two older archives are truncated and have
 no end-of-central-directory record, so their counts are lower bounds.
 
-Grade C/D becomes possible only after you supply a YOLO-format detection dataset that
-genuinely labels individual nuts as `GradeA`, `GradeB`, `GradeC`, `GradeD`. The
-`alwyndsouza21092` annotations can be converted to YOLO with the single class
-`areca_fruit` for localizer work, but they must not be relabelled as grades.
+Grade C/D becomes possible only when the active checkpoint genuinely contains
+`GradeC`/`GradeD` classes. Creating such a checkpoint elsewhere requires a YOLO-format
+detection dataset that labels individual nuts as `GradeA`, `GradeB`, `GradeC`, `GradeD`.
+The `alwyndsouza21092` annotations can be converted to YOLO with the single class
+`areca_fruit` for localizer work, but they must not be relabelled as grades. This project
+does not train models during setup or startup.
 
 Inspection downloads only the annotation file for the 18.3 GB
 `alwyndsouza21092/arecanut-detection-dataset-1` dataset. The full image archive is never
@@ -274,18 +305,19 @@ python scripts\inspect_datasets.py --no-download `
   --dataset-path duvacs_new_arecanut=".\\datasets\\inspection\\duvacs"
 ```
 
-or point it at KaggleHub's cache using a portable environment variable:
+or point it at an existing extracted copy using a project-relative path:
 
 ```powershell
 python scripts\inspect_datasets.py --no-download `
-  --dataset-path duvacs_new_arecanut="$env:USERPROFILE\\.cache\\kagglehub\\datasets\\duvacs\\new-arecanut\\versions\\1"
+  --dataset-path duvacs_new_arecanut=".\\datasets\\inspection\\duvacs"
 ```
 
 Reports are written to `training_reports/dataset_inspection.json` and `.md`.
 
-KaggleHub caches raw data outside the repository. If Kaggle asks for credentials, use the
-standard Kaggle mechanism (`%USERPROFILE%\.kaggle\kaggle.json` or the
-`KAGGLE_USERNAME`/`KAGGLE_KEY` environment variables). Never put credentials in the repo.
+KaggleHub caches raw data outside the repository. If Kaggle asks for credentials, use
+Kaggle's standard local configuration (`kaggle.json` in the location expected by the
+Kaggle CLI) or the `KAGGLE_USERNAME`/`KAGGLE_KEY` environment variables. Never put
+credentials in the repo.
 
 ### 2. Put a genuine YOLO detection dataset in the project
 
@@ -474,8 +506,8 @@ cd ..
   `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 - **Kaggle download fails or times out**: downloads are large; use a long-running
   terminal, or point `--dataset-path` at an existing local copy.
-- **No C/D results**: expected with the bundled model. C/D requires a validated,
-  promoted four-class checkpoint.
+- **No C/D results**: expected with the bundled model. C/D requires an installed
+  validated four-class checkpoint.
 
 ## Honest limitations
 

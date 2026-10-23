@@ -66,7 +66,7 @@
   "known_limitations": [
     "The bundled checkpoint detects Grade A and Grade B only.",
     "No defect, crack, mold, discoloration, or physical-size model is bundled.",
-    "Grade C/D become available only after training and promoting a checkpoint whose class names include GradeC/GradeD.",
+    "Grade C/D become available only when an installed checkpoint whose class names include GradeC/GradeD is active.",
     "The public Kaggle datasets inspected for this project provide image-level ripeness/plant-disease folders, not individual-nut grade bounding boxes.",
     "The alwyndsouza21092 datasets provide individual-nut boxes labelled only areca_fruit. They can train a nut localizer, not the GradeA/GradeB/GradeC/GradeD head."
   ]

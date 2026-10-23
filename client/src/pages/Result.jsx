@@ -322,24 +322,26 @@ export default function Result() {
                 {total} nut{total === 1 ? '' : 's'} detected
               </p>
             </div>
-            {breakdown
-              .filter((item) => supportedLetters.includes(item.letter))
-              .map((item) => {
-                const pct = total ? Math.round((item.count / total) * 1000) / 10 : 0;
-                return (
-                  <div className="card p-5" key={item.grade}>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">
-                      {item.grade} composition
-                    </p>
-                    <p className="stat-value mt-2" style={{ color: gradeColor(item.grade) }}>
-                      {pct}%
-                    </p>
-                    <p className="mt-1 text-xs text-muted">
-                      {item.count} of {total} detections
-                    </p>
-                  </div>
-                );
-              })}
+            {breakdown.map((item) => {
+              const supported = supportedLetters.includes(item.letter);
+              const pct = total ? Math.round((item.count / total) * 1000) / 10 : 0;
+              return (
+                <div className={`card p-5 ${supported ? '' : 'opacity-80'}`} key={item.grade}>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">
+                    {item.grade} composition
+                  </p>
+                  <p
+                    className="stat-value mt-2"
+                    style={{ color: supported ? gradeColor(item.grade) : 'var(--text-muted)' }}
+                  >
+                    {supported ? `${pct}%` : '—'}
+                  </p>
+                  <p className="mt-1 text-xs text-muted">
+                    {supported ? `${item.count} of ${total} detections` : 'Not evaluated by this model'}
+                  </p>
+                </div>
+              );
+            })}
           </div>
 
           {unsupportedLetters.length > 0 && (
@@ -348,11 +350,12 @@ export default function Result() {
                 Grade {unsupportedLetters.join(' / Grade ')} not supported by this model
               </h3>
               <p className="mt-2 text-xs leading-relaxed text-muted">
-                This prediction was produced by a checkpoint that only exposes{' '}
-                {supportedLetters.map((letter) => `Grade ${letter}`).join(', ')} classes.
-                Grade {unsupportedLetters.join(' / ')} are not evaluated and no C/D
-                predictions are fabricated. Install a checkpoint whose class list
-                includes GradeC/GradeD (see the README training workflow) to enable them.
+                All four grade cards are shown for completeness. This prediction was
+                produced by a checkpoint that exposes{' '}
+                {supportedLetters.map((letter) => `Grade ${letter}`).join(', ')} classes, so
+                Grade {unsupportedLetters.join(' / ')} are marked as not evaluated. No C/D
+                detections are inferred from A/B results. They become live automatically if a
+                checkpoint containing GradeC/GradeD classes is installed.
               </p>
             </Card>
           )}
@@ -433,11 +436,21 @@ export default function Result() {
             <div className="mt-3">
               <DetailRow label="Final grade" value={<GradeBadge grade={scan.finalGrade} />} />
               <DetailRow label="Total detected" value={total} />
-              {breakdown
-                .filter((item) => supportedLetters.includes(item.letter))
-                .map((item) => (
-                  <DetailRow key={item.grade} label={item.grade} value={item.count} />
-                ))}
+              {breakdown.map((item) => (
+                <DetailRow
+                  key={item.grade}
+                  label={item.grade}
+                  value={
+                    supportedLetters.includes(item.letter)
+                      ? item.count
+                      : 'Not supported by this model'
+                  }
+                />
+              ))}
+              <DetailRow
+                label="Evaluated grades"
+                value={supportedLetters.map((letter) => `Grade ${letter}`).join(', ')}
+              />
               <DetailRow
                 label="Confidence"
                 value={formatPercent(scan.confidence, 2)}

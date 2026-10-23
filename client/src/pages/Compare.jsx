@@ -17,10 +17,17 @@ import {
   HistoryIcon,
   UploadIcon,
 } from '../components/Icons';
-import { compareArrow, formatDateTime, formatNumber, formatPercent } from '../utils/format';
+import {
+  compareArrow,
+  formatDateTime,
+  formatNumber,
+  formatPercent,
+  supportedGradeLetters,
+} from '../utils/format';
 
 function ScanPanel({ scan, slot }) {
   const annotations = scan.images?.annotated || scan.images?.original;
+  const supported = supportedGradeLetters(scan);
   return (
     <Card className="overflow-hidden animate-in">
       <div className="flex items-center justify-between gap-2 border-b border-[color:var(--border)] px-4 py-3">
@@ -58,8 +65,8 @@ function ScanPanel({ scan, slot }) {
           {[
             ['Grade A', scan.gradeA, 'var(--accent)'],
             ['Grade B', scan.gradeB, 'var(--gold)'],
-            ['Grade C', scan.gradeC || 0, '#c77a2e'],
-            ['Grade D', scan.gradeD || 0, '#8f2f2f'],
+            ['Grade C', supported.includes('C') ? scan.gradeC || 0 : 'Not evaluated', '#c77a2e'],
+            ['Grade D', supported.includes('D') ? scan.gradeD || 0 : 'Not evaluated', '#8f2f2f'],
             ['Total', scan.totalCount, 'var(--text)'],
             ['Quality', scan.qualityScore === null ? '—' : Number(scan.qualityScore).toFixed(1), 'var(--text)'],
             ['Confidence', formatPercent(scan.confidence), 'var(--text)'],

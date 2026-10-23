@@ -336,7 +336,7 @@ export default function Upload() {
                 ['Grade A vs Grade B', true],
                 ['Image-level majority grade', true],
                 ['Bounding boxes + confidence', true],
-                ['C / D grades', false],
+                ['C / D grades (shown but not evaluated)', false],
                 ['Defect categories', false],
                 ['Physical size in mm', false],
               ].map(([label, supported]) => (
