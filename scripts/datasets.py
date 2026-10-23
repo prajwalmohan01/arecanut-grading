@@ -10,10 +10,13 @@ prepared manifests/hardlinks into a configurable training cache.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import time
 import zipfile
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -57,8 +60,8 @@ def portable_text(value) -> str:
         text = text.replace(source, target)
     return text
 
-# The three datasets required by the project brief. KaggleHub resolves and
-# caches these; we never hardcode the cache location.
+# Registered datasets. KaggleHub resolves and caches these; we never hardcode
+# the cache location.
 DATASETS = {
     "duvacs_new_arecanut": {
         "id": "duvacs/new-arecanut",
@@ -71,6 +74,24 @@ DATASETS = {
     "tejpaviraj_arecanut": {
         "id": "tejpaviraj/arecanut",
         "expected": "Arecanut plant/leaf disease image folders (classification).",
+    },
+    "alwyndsouza21092_arecanut": {
+        "id": "alwyndsouza21092/arecanut",
+        "expected": (
+            "Detection CSV/JSON with individual-nut boxes and seven opaque "
+            "classification folders (class_0 ... class_6)."
+        ),
+    },
+    "alwyndsouza21092_arecanut_detection_1": {
+        "id": "alwyndsouza21092/arecanut-detection-dataset-1",
+        "expected": (
+            "10,650 tray images with one VIA CSV annotation file; individual-nut "
+            "boxes, single class only."
+        ),
+        # The full dataset is 18.3 GB. Inspecting only the annotation file is
+        # enough to establish what can and cannot be trained, without filling
+        # the disk with raw images.
+        "annotation_path": "detection_data_1_csv (1).csv",
     },
 }
 
@@ -99,10 +120,15 @@ def kagglehub_version() -> str | None:
         return None
 
 
-def download_dataset(dataset_id: str) -> Path:
-    """Resolve a dataset through KaggleHub (reusing its cache automatically)."""
+def download_dataset(dataset_id: str, path: str | None = None) -> Path:
+    """Resolve a dataset through KaggleHub (reusing its cache automatically).
+
+    ``path`` downloads a single file from the dataset instead of all files.
+    """
     import kagglehub
 
+    if path:
+        return Path(kagglehub.dataset_download(dataset_id, path=path))
     return Path(kagglehub.dataset_download(dataset_id))
 
 
@@ -112,6 +138,10 @@ def resolve_dataset(name: str, explicit_path: str | None = None, download: bool 
     ``explicit_path`` lets an operator point at an already-downloaded copy
     without editing the script (useful offline). ``download=False`` with no
     explicit path records an error instead of touching the network.
+
+    Datasets with an ``annotation_path`` only download that annotation file;
+    inspecting the annotation is enough to decide whether training is possible
+    and avoids downloading multi-gigabyte image archives.
     """
     entry = DATASETS[name]
     result = {"name": name, "id": entry["id"], "path": None, "error": None}
@@ -119,7 +149,7 @@ def resolve_dataset(name: str, explicit_path: str | None = None, download: bool 
         path = Path(explicit_path).expanduser().resolve()
     elif download:
         try:
-            path = download_dataset(entry["id"])
+            path = download_dataset(entry["id"], entry.get("annotation_path"))
         except Exception as exc:  # authentication / network / licence errors
             result["error"] = f"{type(exc).__name__}: {exc}"
             return result
@@ -130,6 +160,8 @@ def resolve_dataset(name: str, explicit_path: str | None = None, download: bool 
     if not path.exists():
         result["error"] = f"Resolved path does not exist: {path}"
         return result
+    if path.is_file():
+        path = path.parent
     result["path"] = str(path)
     return result
 
@@ -188,6 +220,210 @@ def read_yolo_names(path: Path) -> list[str]:
             elif stripped and not stripped.startswith("#"):
                 break
     return names
+
+
+def _annotation_text(raw: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _annotation_payload(path: Path) -> str | None:
+    """Read a VIA CSV/JSON file, including Kaggle's ZIP-wrapped CSV files."""
+    try:
+        if path.stat().st_size > 128 * 1024 * 1024:
+            return None
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if raw[:2] == b"PK":
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                members = [
+                    name
+                    for name in archive.namelist()
+                    if name.lower().endswith((".csv", ".json")) and not name.endswith("/")
+                ]
+                if not members:
+                    return None
+                raw = archive.read(members[0])
+        except (zipfile.BadZipFile, KeyError):
+            return None
+    return _annotation_text(raw)
+
+
+def _via_coord(value) -> str:
+    try:
+        return f"{float(value):.6f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _via_class_values(attributes) -> list[str]:
+    if not isinstance(attributes, dict):
+        return []
+    for key in ("class", "label", "grade", "type"):
+        value = attributes.get(key)
+        if isinstance(value, str) and value.strip():
+            return [value.strip()]
+        if value is not None and not isinstance(value, (dict, list)):
+            return [str(value)]
+    return []
+
+
+def read_via_annotations(path: Path) -> dict | None:
+    """Read VIA JSON or CSV annotations without assuming their class meanings.
+
+    Returns image names, annotated image names, box counts, shape names and the
+    literal class values found in the file. Returns ``None`` when the file is
+    not a recognised VIA annotation file.
+    """
+    text = _annotation_payload(path)
+    if not text:
+        return None
+
+    images: set[str] = set()
+    annotated_images: set[str] = set()
+    box_keys: set[tuple] = set()
+    box_classes: dict[tuple, str] = {}
+    classes: Counter = Counter()
+    shapes: Counter = Counter()
+    boxes = 0
+    errors: list[str] = []
+    annotation_format = None
+
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        try:
+            reader = csv.DictReader(io.StringIO(text))
+            fieldnames = reader.fieldnames or []
+            if "filename" not in fieldnames or not (
+                "region_shape_attributes" in fieldnames
+                or "region_attributes" in fieldnames
+            ):
+                return None
+            annotation_format = "VIA CSV"
+            for row in reader:
+                filename = (row.get("filename") or "").strip()
+                if not filename:
+                    continue
+                images.add(filename)
+                raw_shape = row.get("region_shape_attributes") or "{}"
+                raw_attributes = row.get("region_attributes") or "{}"
+                try:
+                    shape = json.loads(raw_shape) if raw_shape else {}
+                except (TypeError, ValueError):
+                    shape = {}
+                try:
+                    attributes = json.loads(raw_attributes) if raw_attributes else {}
+                except (TypeError, ValueError):
+                    attributes = {}
+                shape_name = str((shape or {}).get("name") or "").strip()
+                if shape_name:
+                    shapes[shape_name] += 1
+                has_rect = shape_name.lower() == "rect" or (
+                    shape and {"x", "y", "width", "height"} <= set(shape)
+                )
+                if has_rect:
+                    boxes += 1
+                    annotated_images.add(filename)
+                    key = (
+                        filename,
+                        _via_coord(shape.get("x")),
+                        _via_coord(shape.get("y")),
+                        _via_coord(shape.get("width")),
+                        _via_coord(shape.get("height")),
+                    )
+                    box_keys.add(key)
+                    values = _via_class_values(attributes)
+                    for value in values:
+                        classes[value] += 1
+                    box_classes[key] = values[0] if values else "unlabelled"
+        except (csv.Error, UnicodeError) as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+    elif suffix == ".json":
+        try:
+            data = json.loads(text)
+        except (TypeError, ValueError) as exc:
+            return {
+                "format": "JSON (unreadable)",
+                "images": set(),
+                "annotated_images": set(),
+                "box_keys": set(),
+                "box_classes": {},
+                "boxes": 0,
+                "classes": Counter(),
+                "shapes": Counter(),
+                "errors": [f"{type(exc).__name__}: {exc}"],
+            }
+        if not isinstance(data, dict):
+            return None
+        metadata = data.get("_via_img_metadata")
+        if not isinstance(metadata, dict):
+            candidate = {
+                key: value
+                for key, value in data.items()
+                if isinstance(value, dict)
+                and "regions" in value
+                and ("filename" in value or key.lower().endswith((".jpg", ".jpeg", ".png")))
+            }
+            if not candidate:
+                return None
+            metadata = candidate
+        annotation_format = "VIA JSON"
+        for key, entry in metadata.items():
+            if not isinstance(entry, dict):
+                continue
+            filename = str(entry.get("filename") or key)
+            images.add(filename)
+            regions = entry.get("regions") or []
+            if not isinstance(regions, list):
+                continue
+            for region in regions:
+                if not isinstance(region, dict):
+                    continue
+                shape = region.get("shape_attributes") or {}
+                attributes = region.get("region_attributes") or {}
+                shape_name = str((shape or {}).get("name") or "").strip()
+                if shape_name:
+                    shapes[shape_name] += 1
+                has_rect = shape_name.lower() == "rect" or (
+                    shape and {"x", "y", "width", "height"} <= set(shape)
+                )
+                if has_rect:
+                    boxes += 1
+                    annotated_images.add(filename)
+                    key = (
+                        filename,
+                        _via_coord(shape.get("x")),
+                        _via_coord(shape.get("y")),
+                        _via_coord(shape.get("width")),
+                        _via_coord(shape.get("height")),
+                    )
+                    box_keys.add(key)
+                    values = _via_class_values(attributes)
+                    for value in values:
+                        classes[value] += 1
+                    box_classes[key] = values[0] if values else "unlabelled"
+    else:
+        return None
+
+    if annotation_format is None:
+        return None
+    return {
+        "format": annotation_format,
+        "images": images,
+        "annotated_images": annotated_images,
+        "box_keys": box_keys,
+        "box_classes": box_classes,
+        "boxes": boxes,
+        "classes": classes,
+        "shapes": shapes,
+        "errors": errors,
+    }
 
 
 def _folder_label_counts(root: Path, image_paths: list[Path]) -> dict[str, int]:
@@ -326,14 +562,46 @@ def inspect_dataset(name: str, path: Path, scan_archives: bool = False) -> dict:
             yolo_names = names
             break
 
+    # VIA JSON/CSV annotations (LabelMe-style rectangles). The alwyndsouza21092
+    # datasets ship annotations this way, and the larger one wraps its CSV in a
+    # ZIP even though the filename ends in .csv.
+    via_files: list[str] = []
+    via_images: set[str] = set()
+    via_annotated_images: set[str] = set()
+    via_box_keys: set[tuple] = set()
+    via_box_classes: dict[tuple, str] = {}
+    via_shapes: Counter = Counter()
+    via_errors: list[str] = []
+    for annotation_path in annotation_paths:
+        if annotation_path.suffix.lower() not in {".csv", ".json"}:
+            continue
+        parsed = read_via_annotations(annotation_path)
+        if parsed is None:
+            continue
+        via_files.append(str(annotation_path.relative_to(path)))
+        via_images.update(parsed["images"])
+        via_box_keys.update(parsed["box_keys"])
+        via_box_classes.update(parsed["box_classes"])
+        via_shapes.update(parsed["shapes"])
+        for error in parsed["errors"]:
+            via_errors.append(f"{annotation_path.name}: {error}")
+
+    # The same boxes can appear in both a CSV and a VIA JSON export. De-duplicate
+    # by image + rectangle so counts stay real rather than double-counted.
+    via_annotated_images = {key[0] for key in via_box_keys}
+    via_classes: Counter = Counter(via_box_classes.values())
+    via_boxes = len(via_box_keys)
+    annotation_class_names = list(
+        dict.fromkeys(list(yolo_names) + sorted(via_classes))
+    )
     folder_counts = _folder_label_counts(path, image_paths)
     lower_folders = " ".join(folder_counts).lower()
 
     grade_labels = {}
     for letter, patterns in GRADE_PATTERNS.items():
         grade_labels[letter] = any(pattern in lower_folders for pattern in patterns)
-    if yolo_names:
-        joined = " ".join(yolo_names).lower()
+    if annotation_class_names:
+        joined = " ".join(annotation_class_names).lower()
         for letter, patterns in GRADE_PATTERNS.items():
             grade_labels[letter] = grade_labels[letter] or any(
                 pattern in joined for pattern in patterns
@@ -366,8 +634,11 @@ def inspect_dataset(name: str, path: Path, scan_archives: bool = False) -> dict:
                 pattern in joined for pattern in patterns
             )
 
-    annotations_detected = bool(detection_labels) or bool(yolo_names)
-    if annotations_detected:
+    annotations_detected = bool(detection_labels) or bool(yolo_names) or via_boxes > 0
+    if via_boxes:
+        class_text = ", ".join(sorted(via_classes)) or "unlabelled"
+        label_level = f"individual-nut (VIA boxes; classes: {class_text})"
+    elif annotations_detected:
         label_level = "individual-nut (detection bounding boxes)"
     elif folder_counts or streamed_folder_counts:
         label_level = "image-level (folder/class labels)"
@@ -395,6 +666,17 @@ def inspect_dataset(name: str, path: Path, scan_archives: bool = False) -> dict:
             "yolo_label_dirs": [str(p.relative_to(path)) for p in label_dirs],
             "yolo_label_count": detection_labels,
             "yolo_class_names": yolo_names,
+            "via_annotation_files": via_files,
+            "via_annotation_images": len(via_images),
+            "via_annotated_images": len(via_annotated_images),
+            "via_unannotated_images": len(via_images - via_annotated_images),
+            "via_boxes": via_boxes,
+            "via_class_counts": dict(
+                sorted(via_classes.items(), key=lambda item: (-item[1], item[0]))
+            ),
+            "via_shapes": dict(via_shapes),
+            "via_errors": via_errors[:25],
+            "annotation_class_names": annotation_class_names,
             "folder_label_counts": folder_counts,
             "streamed_folder_counts": streamed_folder_counts,
             "label_level": label_level,
@@ -422,9 +704,28 @@ def inspect_dataset(name: str, path: Path, scan_archives: bool = False) -> dict:
                 else "Archive validity was checked but contents were not treated as images."
             )
         )
+    if via_boxes and not report["explicit_grade_support"]:
+        class_text = ", ".join(sorted(via_classes)) or "unlabelled"
+        report["limitations"].append(
+            f"VIA annotations contain {via_boxes} individual-nut box(es) with class "
+            f"name(s) {class_text}, not GradeA/GradeB/GradeC/GradeD. They can train "
+            "a single-class nut localizer, not the application's grade head."
+        )
+    opaque_folders = sorted(
+        name
+        for name in set(folder_counts) | set(streamed_folder_counts)
+        if name.lower().startswith("class_") and name[6:].isdigit()
+    )
+    if opaque_folders:
+        report["limitations"].append(
+            "Folder labels are opaque ("
+            + ", ".join(opaque_folders)
+            + "). Their meanings are not documented, so they are not mapped to "
+            "GradeA/GradeB/GradeC/GradeD."
+        )
     if not annotations_detected:
         report["limitations"].append(
-            "No YOLO/COCO/VOC bounding-box annotations were found. Object-detection "
+            "No YOLO/VIA/COCO/VOC bounding-box annotations were found. Object-detection "
             "training is not supported by this dataset as delivered; labels are "
             "image-level folder names only."
         )

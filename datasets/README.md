@@ -57,9 +57,15 @@ Never add C/D boxes unless a human has verified those nuts as C/D.
 
 ## What cannot be used
 
-Unlabelled images cannot train a detector. The public Kaggle datasets inspected for this
-project contain image-level folders (ripeness and plant disease), not per-nut bounding
-boxes, so they are not valid detector training data as delivered.
+Unlabelled images cannot train a detector. The older public Kaggle datasets inspected for
+this project contain image-level folders (ripeness and plant disease), not per-nut
+bounding boxes.
+
+The `alwyndsouza21092/arecanut` and `alwyndsouza21092/arecanut-detection-dataset-1`
+datasets do contain per-nut boxes, but only one class: `areca_fruit`. They can train a
+single-class **nut localizer**, not the `GradeA`/`GradeB`/`GradeC`/`GradeD` grade head.
+Do not relabel those boxes as grades. The `class_0` … `class_6` folders in the smaller
+dataset have no documented meaning and must not be assumed to be A/B/C/D.
 
 Do not put random images in this folder and expect training to start. `prepare_dataset.py`
 requires image/label pairs and at least `--min-boxes` boxes (default 50).

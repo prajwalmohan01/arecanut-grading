@@ -1,17 +1,19 @@
 {
-  "generated_at": "2026-10-23T07:06:00.580062+00:00",
+  "generated_at": "2026-10-23T07:52:14.112833+00:00",
   "kagglehub_version": "1.0.3",
   "datasets_requested": {
     "duvacs_new_arecanut": "duvacs/new-arecanut",
     "subrahmanya090_arecanut": "subrahmanya090/arecanut",
-    "tejpaviraj_arecanut": "tejpaviraj/arecanut"
+    "tejpaviraj_arecanut": "tejpaviraj/arecanut",
+    "alwyndsouza21092_arecanut": "alwyndsouza21092/arecanut",
+    "alwyndsouza21092_arecanut_detection_1": "alwyndsouza21092/arecanut-detection-dataset-1"
   },
   "datasets": [
     {
       "name": "duvacs_new_arecanut",
       "id": "duvacs/new-arecanut",
       "path": "~/.cache/kagglehub/datasets/duvacs/new-arecanut/versions/1",
-      "inspected_at": "2026-10-23T07:06:02.546968+00:00",
+      "inspected_at": "2026-10-23T07:52:14.946300+00:00",
       "exists": true,
       "errors": [],
       "total_files": 1167,
@@ -38,6 +40,15 @@
       "yolo_label_dirs": [],
       "yolo_label_count": 0,
       "yolo_class_names": [],
+      "via_annotation_files": [],
+      "via_annotation_images": 0,
+      "via_annotated_images": 0,
+      "via_unannotated_images": 0,
+      "via_boxes": 0,
+      "via_class_counts": {},
+      "via_shapes": {},
+      "via_errors": [],
+      "annotation_class_names": [],
       "folder_label_counts": {
         "Unripen": 629,
         "Ripenes": 538
@@ -53,7 +64,7 @@
       },
       "explicit_grade_support": [],
       "limitations": [
-        "No YOLO/COCO/VOC bounding-box annotations were found. Object-detection training is not supported by this dataset as delivered; labels are image-level folder names only."
+        "No YOLO/VIA/COCO/VOC bounding-box annotations were found. Object-detection training is not supported by this dataset as delivered; labels are image-level folder names only."
       ],
       "expected_content": "Arecanut ripeness images (Ripenes / Unripen folders)."
     },
@@ -61,7 +72,7 @@
       "name": "subrahmanya090_arecanut",
       "id": "subrahmanya090/arecanut",
       "path": "~/.cache/kagglehub/datasets/subrahmanya090/arecanut",
-      "inspected_at": "2026-10-23T07:06:05.739295+00:00",
+      "inspected_at": "2026-10-23T07:52:16.840842+00:00",
       "exists": true,
       "errors": [],
       "total_files": 1,
@@ -98,7 +109,7 @@
             "truncated": true,
             "error": "TruncatedDataError: ",
             "time_budget_exceeded": false,
-            "elapsed_seconds": 9.0
+            "elapsed_seconds": 4.0
           }
         }
       ],
@@ -108,6 +119,15 @@
       "yolo_label_dirs": [],
       "yolo_label_count": 0,
       "yolo_class_names": [],
+      "via_annotation_files": [],
+      "via_annotation_images": 0,
+      "via_annotated_images": 0,
+      "via_unannotated_images": 0,
+      "via_boxes": 0,
+      "via_class_counts": {},
+      "via_shapes": {},
+      "via_errors": [],
+      "annotation_class_names": [],
       "folder_label_counts": {},
       "streamed_folder_counts": {
         "Bette": 424
@@ -123,7 +143,7 @@
       "explicit_grade_support": [],
       "limitations": [
         "Only archive files were found; KaggleHub did not extract them. Archive entries were streamed from the local headers, but the file has no end-of-central-directory record, so it is incomplete/truncated and the reported counts are a lower bound, not the full dataset.",
-        "No YOLO/COCO/VOC bounding-box annotations were found. Object-detection training is not supported by this dataset as delivered; labels are image-level folder names only."
+        "No YOLO/VIA/COCO/VOC bounding-box annotations were found. Object-detection training is not supported by this dataset as delivered; labels are image-level folder names only."
       ],
       "expected_content": "Arecanut image folders; annotation format unknown until inspected."
     },
@@ -131,7 +151,7 @@
       "name": "tejpaviraj_arecanut",
       "id": "tejpaviraj/arecanut",
       "path": "~/.cache/kagglehub/datasets/tejpaviraj/arecanut",
-      "inspected_at": "2026-10-23T07:06:15.153240+00:00",
+      "inspected_at": "2026-10-23T07:52:22.295530+00:00",
       "exists": true,
       "errors": [],
       "total_files": 1,
@@ -176,7 +196,7 @@
             "truncated": true,
             "error": "TruncatedDataError: ",
             "time_budget_exceeded": false,
-            "elapsed_seconds": 19.6
+            "elapsed_seconds": 6.5
           }
         }
       ],
@@ -186,6 +206,15 @@
       "yolo_label_dirs": [],
       "yolo_label_count": 0,
       "yolo_class_names": [],
+      "via_annotation_files": [],
+      "via_annotation_images": 0,
+      "via_annotated_images": 0,
+      "via_unannotated_images": 0,
+      "via_boxes": 0,
+      "via_class_counts": {},
+      "via_shapes": {},
+      "via_errors": [],
+      "annotation_class_names": [],
       "folder_label_counts": {},
       "streamed_folder_counts": {
         "Mahali_Koleroga": 641,
@@ -209,10 +238,148 @@
       "explicit_grade_support": [],
       "limitations": [
         "Only archive files were found; KaggleHub did not extract them. Archive entries were streamed from the local headers, but the file has no end-of-central-directory record, so it is incomplete/truncated and the reported counts are a lower bound, not the full dataset.",
-        "No YOLO/COCO/VOC bounding-box annotations were found. Object-detection training is not supported by this dataset as delivered; labels are image-level folder names only."
+        "No YOLO/VIA/COCO/VOC bounding-box annotations were found. Object-detection training is not supported by this dataset as delivered; labels are image-level folder names only."
       ],
       "expected_content": "Arecanut plant/leaf disease image folders (classification)."
+    },
+    {
+      "name": "alwyndsouza21092_arecanut",
+      "id": "alwyndsouza21092/arecanut",
+      "path": "~/.cache/kagglehub/datasets/alwyndsouza21092/arecanut/versions/1",
+      "inspected_at": "2026-10-23T07:52:28.750970+00:00",
+      "exists": true,
+      "errors": [],
+      "total_files": 4503,
+      "image_files": 4501,
+      "readable_images": 4501,
+      "unreadable_images": 0,
+      "corrupted_image_samples": [],
+      "common_dimensions": {
+        "1024x1024": 1704,
+        "432x468": 3,
+        "426x361": 3,
+        "462x497": 3,
+        "509x397": 3,
+        "124x148": 2,
+        "479x545": 2,
+        "349x326": 2,
+        "485x290": 2,
+        "320x284": 2
+      },
+      "archive_files": [],
+      "annotation_files": 2,
+      "annotation_extensions": [
+        ".csv",
+        ".json"
+      ],
+      "annotation_samples": [
+        "detection_combined_annotations_csv (1).csv",
+        "training_images-20240405T112216Z-001\\training_images\\via_project_25Mar2024_15h0m.json"
+      ],
+      "yolo_label_dirs": [],
+      "yolo_label_count": 0,
+      "yolo_class_names": [],
+      "via_annotation_files": [
+        "detection_combined_annotations_csv (1).csv",
+        "training_images-20240405T112216Z-001\\training_images\\via_project_25Mar2024_15h0m.json"
+      ],
+      "via_annotation_images": 1704,
+      "via_annotated_images": 1531,
+      "via_unannotated_images": 173,
+      "via_boxes": 2435,
+      "via_class_counts": {
+        "areca_fruit": 2435
+      },
+      "via_shapes": {
+        "rect": 2736
+      },
+      "via_errors": [],
+      "annotation_class_names": [
+        "areca_fruit"
+      ],
+      "folder_label_counts": {
+        "training_images": 1704,
+        "class_3": 526,
+        "class_0": 482,
+        "class_2": 474,
+        "class_1": 444,
+        "class_6": 310,
+        "class_5": 307,
+        "class_4": 254
+      },
+      "streamed_folder_counts": {},
+      "label_level": "individual-nut (VIA boxes; classes: areca_fruit)",
+      "bounding_boxes_available": true,
+      "explicit_grade_labels": {
+        "A": false,
+        "B": false,
+        "C": false,
+        "D": false
+      },
+      "explicit_grade_support": [],
+      "limitations": [
+        "VIA annotations contain 2435 individual-nut box(es) with class name(s) areca_fruit, not GradeA/GradeB/GradeC/GradeD. They can train a single-class nut localizer, not the application's grade head.",
+        "Folder labels are opaque (class_0, class_1, class_2, class_3, class_4, class_5, class_6). Their meanings are not documented, so they are not mapped to GradeA/GradeB/GradeC/GradeD."
+      ],
+      "expected_content": "Detection CSV/JSON with individual-nut boxes and seven opaque classification folders (class_0 ... class_6)."
+    },
+    {
+      "name": "alwyndsouza21092_arecanut_detection_1",
+      "id": "alwyndsouza21092/arecanut-detection-dataset-1",
+      "path": "~/.cache/kagglehub/datasets/alwyndsouza21092/arecanut-detection-dataset-1/versions/1",
+      "inspected_at": "2026-10-23T07:52:33.937484+00:00",
+      "exists": true,
+      "errors": [],
+      "total_files": 1,
+      "image_files": 0,
+      "readable_images": 0,
+      "unreadable_images": 0,
+      "corrupted_image_samples": [],
+      "common_dimensions": {},
+      "archive_files": [],
+      "annotation_files": 1,
+      "annotation_extensions": [
+        ".csv"
+      ],
+      "annotation_samples": [
+        "detection_data_1_csv (1).csv"
+      ],
+      "yolo_label_dirs": [],
+      "yolo_label_count": 0,
+      "yolo_class_names": [],
+      "via_annotation_files": [
+        "detection_data_1_csv (1).csv"
+      ],
+      "via_annotation_images": 10650,
+      "via_annotated_images": 5986,
+      "via_unannotated_images": 4664,
+      "via_boxes": 8374,
+      "via_class_counts": {
+        "areca_fruit": 8374
+      },
+      "via_shapes": {
+        "rect": 8374
+      },
+      "via_errors": [],
+      "annotation_class_names": [
+        "areca_fruit"
+      ],
+      "folder_label_counts": {},
+      "streamed_folder_counts": {},
+      "label_level": "individual-nut (VIA boxes; classes: areca_fruit)",
+      "bounding_boxes_available": true,
+      "explicit_grade_labels": {
+        "A": false,
+        "B": false,
+        "C": false,
+        "D": false
+      },
+      "explicit_grade_support": [],
+      "limitations": [
+        "VIA annotations contain 8374 individual-nut box(es) with class name(s) areca_fruit, not GradeA/GradeB/GradeC/GradeD. They can train a single-class nut localizer, not the application's grade head."
+      ],
+      "expected_content": "10,650 tray images with one VIA CSV annotation file; individual-nut boxes, single class only."
     }
   ],
-  "grade_cd_conclusion": "No inspected dataset provides both explicit Grade C/D labels and individual-nut bounding boxes. The delivered datasets are image-level classifications (ripeness and plant-disease folders) with no nut-level grade annotations. Grade C/D cannot be trained from these files without fabricating labels. The current GradeA/GradeB detector is preserved. To enable C/D, annotate individual nuts with YOLO boxes labelled GradeA/GradeB/GradeC/GradeD, put the dataset in datasets/arecanut_grades (see datasets/README.md), then run scripts/prepare_dataset.py, scripts/train_model.py and scripts/evaluate_model.py."
+  "grade_cd_conclusion": "No inspected dataset provides explicit Grade A/B/C/D labels on individual nuts. The alwyndsouza21092 datasets provide real VIA bounding boxes, but every box is the single class areca_fruit: they can train a nut localizer, not a grade classifier. Their class_0...class_6 classification folders are undocumented and are not mapped to grades. The older datasets are image-level ripeness/plant-disease folders. Grade C/D cannot be trained from these files without fabricating labels. The current GradeA/GradeB detector is preserved. To enable C/D, annotate individual nuts with YOLO boxes labelled GradeA/GradeB/GradeC/GradeD, put the dataset in datasets/arecanut_grades (see datasets/README.md), then run scripts/prepare_dataset.py, scripts/train_model.py and scripts/evaluate_model.py."
 }

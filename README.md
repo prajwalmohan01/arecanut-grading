@@ -233,22 +233,32 @@ downloads datasets at runtime, and never promotes a model automatically.
 ### Reality check: what the public datasets contain
 
 `training_reports/dataset_inspection.md` and `.json` record the real inspection of the
-three required Kaggle datasets:
+five Kaggle datasets registered in `scripts/datasets.py`:
 
 | Dataset | Images found | Annotations | Label level | A/B/C/D nut labels |
-| --- | ---: | ---: | --- | --- |
+| --- | ---: | --- | --- | --- |
 | `duvacs/new-arecanut` | 1,167 | 0 | image-level (`Ripenes` / `Unripen`) | none |
 | `subrahmanya090/arecanut` | 424 (truncated archive, lower bound) | 0 | image-level folders | none |
 | `tejpaviraj/arecanut` | 2,107 (truncated archive, lower bound) | 0 | image-level plant/leaf disease folders | none |
+| `alwyndsouza21092/arecanut` | 4,501 | VIA CSV + JSON: 2,435 unique boxes / 1,531 images | single class `areca_fruit`; 7 opaque `class_*` folders | none |
+| `alwyndsouza21092/arecanut-detection-dataset-1` | 10,650 | VIA CSV: 8,374 boxes / 5,986 images | single class `areca_fruit` | none |
 
-None of these datasets provides individual-nut bounding boxes with Grade A/B/C/D labels.
-`tejpaviraj/arecanut` is a plant-disease classification dataset, not a nut-grade detection
-dataset. The two archives are truncated and have no end-of-central-directory record, so
-their counts are lower bounds. Grade C/D cannot be trained from these files without
-fabricating labels, which this project does not do.
+The first three datasets are image-level classifications (ripeness or plant/leaf disease),
+not nut-grade detection datasets. The two `alwyndsouza21092` datasets contain real
+individual-nut bounding boxes, which is enough to train a **single-class nut localizer**.
+Every box is labelled `areca_fruit`, so they cannot train the application's GradeA/GradeB/
+GradeC/GradeD head. Their `class_0` … `class_6` folders are opaque; this project does not
+guess their meanings or map them to grades. The two older archives are truncated and have
+no end-of-central-directory record, so their counts are lower bounds.
 
 Grade C/D becomes possible only after you supply a YOLO-format detection dataset that
-genuinely labels individual nuts as `GradeA`, `GradeB`, `GradeC`, `GradeD`.
+genuinely labels individual nuts as `GradeA`, `GradeB`, `GradeC`, `GradeD`. The
+`alwyndsouza21092` annotations can be converted to YOLO with the single class
+`areca_fruit` for localizer work, but they must not be relabelled as grades.
+
+Inspection downloads only the annotation file for the 18.3 GB
+`alwyndsouza21092/arecanut-detection-dataset-1` dataset. The full image archive is never
+downloaded just to inspect labels.
 
 ### 1. Get and inspect data (optional, for inspection only)
 
@@ -476,8 +486,9 @@ cd ..
   image-space box sizes are shown.
 - No verified held-out evaluation report is bundled for the preserved weights, so no
   accuracy metrics are claimed.
-- The three public Kaggle datasets inspected are image-level classification datasets and
-  cannot support nut-level A/B/C/D detection training without new annotation work.
+- The older public Kaggle datasets inspected are image-level classification datasets. The
+  two `alwyndsouza21092` datasets add real nut-level boxes, but only the single class
+  `areca_fruit`; they cannot support A/B/C/D grade training without new annotation work.
 - Confidence and quality scores are documented heuristics/aggregates, not calibrated
   probabilities or laboratory grades.
 - Reports are automated estimates, not certified commercial grading.

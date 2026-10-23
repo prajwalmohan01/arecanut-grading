@@ -1,13 +1,17 @@
-"""Inspect the three required Kaggle datasets and write a real report.
+"""Inspect the registered Kaggle datasets and write a real report.
 
 Manual use only:
 
     python scripts/inspect_datasets.py
+    python scripts/inspect_datasets.py --only alwyndsouza21092_arecanut
     python scripts/inspect_datasets.py --no-download --dataset-path duvacs_new_arecanut=".\\datasets\\duvacs"
     python scripts/inspect_datasets.py --no-download --dataset-path tejpaviraj_arecanut="$env:USERPROFILE\\.cache\\kagglehub\\datasets\\tejpaviraj\\arecanut"
 
 Raw datasets stay in the KaggleHub cache. Only the JSON/Markdown report is
-written into the project (``training_reports/``).
+written into the project (``training_reports/``). For the 18.3 GB
+``alwyndsouza21092/arecanut-detection-dataset-1`` dataset only its annotation
+file is downloaded; inspecting annotations is enough to decide whether training
+is possible.
 """
 
 from __future__ import annotations
@@ -21,9 +25,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.datasets import (  # noqa: E402
     DATASETS,
     REPORTS_DIR,
-    download_dataset,
     inspect_dataset,
     kagglehub_version,
+    resolve_dataset,
     utc_now,
     write_json,
 )
@@ -53,7 +57,7 @@ def markdown_summary(report) -> str:
         "",
         "## Summary",
         "",
-        "| Dataset | Images | Readable | Annotations | Label level | A/B/C/D labels | Bounding boxes |",
+        "| Dataset | Images | Readable | Annotation files | Label level | A/B/C/D labels | Boxes (classes) |",
         "| --- | ---: | ---: | --- | --- | --- | --- |",
     ]
     for item in report["datasets"]:
@@ -64,21 +68,35 @@ def markdown_summary(report) -> str:
             continue
         grade_labels = ", ".join(item.get("explicit_grade_support") or []) or "none"
         images = item.get("image_files", 0)
+        readable = item.get("readable_images", 0)
         if not images:
+            via_images = item.get("via_annotation_images", 0)
             streamed = sum(
                 (archive.get("streamed_contents") or {}).get("entries", 0)
                 for archive in item.get("archive_files") or []
             )
-            images = f"{streamed} (archive, lower bound)" if streamed else 0
+            if via_images:
+                images = f"{via_images} (annotation file; images not downloaded)"
+                readable = "—"
+            elif streamed:
+                images = f"{streamed} (archive, lower bound)"
+            else:
+                images = 0
+        box_text = "no"
+        if item.get("via_boxes"):
+            class_text = ", ".join(item.get("via_class_counts") or {}) or "unlabelled"
+            box_text = f"{item['via_boxes']} ({class_text})"
+        elif item.get("bounding_boxes_available"):
+            box_text = "yes"
         lines.append(
             "| {id} | {images} | {readable} | {annotations} | {level} | {grades} | {boxes} |".format(
                 id=item["id"],
                 images=images,
-                readable=item.get("readable_images", 0),
+                readable=readable,
                 annotations=item.get("annotation_files", 0),
                 level=item.get("label_level", "unknown"),
                 grades=grade_labels,
-                boxes="yes" if item.get("bounding_boxes_available") else "no",
+                boxes=box_text,
             )
         )
 
@@ -96,6 +114,25 @@ def markdown_summary(report) -> str:
         lines.append(f"- Unreadable images: {item.get('unreadable_images', 0)}")
         lines.append(f"- Annotation files: {item.get('annotation_files', 0)}")
         lines.append(f"- Annotation formats: {', '.join(item.get('annotation_extensions') or []) or 'none'}")
+        if item.get("via_annotation_files"):
+            lines.append(
+                f"- VIA annotation files: {', '.join(item['via_annotation_files'])}"
+            )
+            lines.append(
+                f"- VIA image records: {item.get('via_annotation_images', 0)} "
+                f"({item.get('via_annotated_images', 0)} with boxes, "
+                f"{item.get('via_unannotated_images', 0)} without boxes)"
+            )
+            lines.append(f"- VIA boxes: {item.get('via_boxes', 0)}")
+            classes = ", ".join(
+                f"{name} ({count})"
+                for name, count in (item.get("via_class_counts") or {}).items()
+            )
+            lines.append(f"- VIA class values: {classes or 'none'}")
+        if item.get("annotation_class_names"):
+            lines.append(
+                f"- Annotation class names: {', '.join(item['annotation_class_names'])}"
+            )
         lines.append(f"- Label level: {item.get('label_level', 'unknown')}")
         lines.append(f"- Explicit grade labels found: {', '.join(item.get('explicit_grade_support') or []) or 'none'}")
         folders = item.get("folder_label_counts") or item.get("streamed_folder_counts") or {}
@@ -142,6 +179,13 @@ def main() -> int:
         help="Stream entry names out of truncated .archive files (slow, lower-bound counts).",
     )
     parser.add_argument(
+        "--only",
+        action="append",
+        choices=list(DATASETS),
+        default=[],
+        help="Inspect only the named dataset (repeatable).",
+    )
+    parser.add_argument(
         "--output",
         default=str(REPORTS_DIR / "dataset_inspection.json"),
         help="JSON report path.",
@@ -149,25 +193,25 @@ def main() -> int:
     args = parser.parse_args()
 
     explicit = parse_dataset_paths(args.dataset_path)
+    selected = {
+        name: entry
+        for name, entry in DATASETS.items()
+        if not args.only or name in args.only
+    }
     report = {
         "generated_at": utc_now(),
         "kagglehub_version": kagglehub_version(),
-        "datasets_requested": {name: entry["id"] for name, entry in DATASETS.items()},
+        "datasets_requested": {name: entry["id"] for name, entry in selected.items()},
         "datasets": [],
     }
 
-    for name, entry in DATASETS.items():
+    for name, entry in selected.items():
         print(f"Inspecting {entry['id']} ...", flush=True)
-        resolved = {"path": None, "error": None}
-        if name in explicit:
-            resolved["path"] = str(Path(explicit[name]).expanduser().resolve())
-        elif args.no_download:
-            resolved["error"] = "Skipped (--no-download and no --dataset-path)."
-        else:
-            try:
-                resolved["path"] = str(download_dataset(entry["id"]))
-            except Exception as exc:
-                resolved["error"] = f"{type(exc).__name__}: {exc}"
+        resolved = resolve_dataset(
+            name,
+            explicit_path=explicit.get(name),
+            download=not args.no_download,
+        )
 
         if resolved.get("error"):
             report["datasets"].append(
@@ -221,14 +265,16 @@ def main() -> int:
         )
     else:
         report["grade_cd_conclusion"] = (
-            "No inspected dataset provides both explicit Grade C/D labels and "
-            "individual-nut bounding boxes. The delivered datasets are image-level "
-            "classifications (ripeness and plant-disease folders) with no nut-level "
-            "grade annotations. Grade C/D cannot be trained from these files without "
-            "fabricating labels. The current GradeA/GradeB detector is preserved. "
-            "To enable C/D, annotate individual nuts with YOLO boxes labelled "
-            "GradeA/GradeB/GradeC/GradeD, put the dataset in "
-            "datasets/arecanut_grades (see datasets/README.md), then run "
+            "No inspected dataset provides explicit Grade A/B/C/D labels on "
+            "individual nuts. The alwyndsouza21092 datasets provide real VIA "
+            "bounding boxes, but every box is the single class areca_fruit: they "
+            "can train a nut localizer, not a grade classifier. Their class_0...class_6 "
+            "classification folders are undocumented and are not mapped to grades. "
+            "The older datasets are image-level ripeness/plant-disease folders. "
+            "Grade C/D cannot be trained from these files without fabricating labels. "
+            "The current GradeA/GradeB detector is preserved. To enable C/D, annotate "
+            "individual nuts with YOLO boxes labelled GradeA/GradeB/GradeC/GradeD, put "
+            "the dataset in datasets/arecanut_grades (see datasets/README.md), then run "
             "scripts/prepare_dataset.py, scripts/train_model.py and "
             "scripts/evaluate_model.py."
         )
