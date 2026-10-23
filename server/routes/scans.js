@@ -7,6 +7,7 @@ const path = require('path');
 const mongoose = require('mongoose');
 
 const Scan = require('../models/Scan');
+const Lot = require('../models/Lot');
 const { protect } = require('../middleware/authMiddleware');
 const { config } = require('../config');
 const asyncHandler = require('../utils/asyncHandler');
@@ -30,6 +31,7 @@ const {
   loadReportImages,
   deleteScanImages,
 } = require('../services/scanService');
+const { getLotMap } = require('../services/lotService');
 const { buildPredictionReport, buildComparisonReport } = require('../utils/pdf');
 
 const router = express.Router();
@@ -75,6 +77,10 @@ function buildFilter(userId, query = {}) {
   const filter = { user: userId };
   const grade = normalizeGrade(query.grade);
   if (grade) filter.finalGrade = grade;
+
+  if (query.lot && mongoose.Types.ObjectId.isValid(query.lot)) {
+    filter.lot = query.lot;
+  }
 
   const from = parseDate(query.from);
   const to = parseDate(query.to);
@@ -129,6 +135,14 @@ function sendPdf(res, buffer, filename) {
   res.send(buffer);
 }
 
+function csvCell(value) {
+  const text = String(value ?? '');
+  if (/[",\n\r]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
 // ── POST /api/scans/predict ────────────────────────────────────────────────
 router.post(
   '/predict',
@@ -137,6 +151,19 @@ router.post(
   asyncHandler(async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No image uploaded' });
+    }
+
+    let lotId = req.body?.lotId || req.body?.lot || null;
+    if (lotId && !mongoose.Types.ObjectId.isValid(lotId)) {
+      removeTempFile(req.file.path);
+      return res.status(400).json({ error: 'Invalid lot ID' });
+    }
+    if (lotId) {
+      const lot = await Lot.findOne({ _id: lotId, user: req.user._id });
+      if (!lot) {
+        removeTempFile(req.file.path);
+        return res.status(400).json({ error: 'Lot not found' });
+      }
     }
 
     const uploadedPath = req.file.path;
@@ -202,6 +229,7 @@ router.post(
         processingMs: inference.processingMs,
         imageWidth: inference.image.width || null,
         imageHeight: inference.image.height || null,
+        lot: lotId || null,
         user: req.user._id,
       });
 
@@ -311,9 +339,129 @@ router.get(
         from: req.query.from || null,
         to: req.query.to || null,
         q: req.query.q || null,
+        lot: mongoose.Types.ObjectId.isValid(req.query.lot) ? req.query.lot : null,
         sort: req.query.sort || 'newest',
       },
     });
+  })
+);
+
+// ── GET /api/scans/export.csv ──────────────────────────────────────────────
+router.get(
+  '/export.csv',
+  protect,
+  asyncHandler(async (req, res) => {
+    const MAX_ROWS = 5000;
+    const filter = buildFilter(req.user._id, req.query);
+    const [total, scans] = await Promise.all([
+      Scan.countDocuments(filter),
+      Scan.find(filter)
+        .sort(sortOption(req.query.sort))
+        .limit(MAX_ROWS)
+        .select('-annotatedImage -detections -defects'),
+    ]);
+
+    const lotIds = [...new Set(scans.filter((scan) => scan.lot).map((scan) => String(scan.lot)))];
+    const lots = lotIds.length
+      ? await Lot.find({ _id: { $in: lotIds }, user: req.user._id }).select('name reference')
+      : [];
+    const lotMap = getLotMap(lots);
+
+    const summary = {
+      gradeA: 0,
+      gradeB: 0,
+      gradeC: 0,
+      gradeD: 0,
+      invalid: 0,
+      nuts: 0,
+    };
+    scans.forEach((scan) => {
+      const count = Number(scan.totalCount) || 0;
+      summary.nuts += count;
+      if (scan.finalGrade === 'Grade A') summary.gradeA += 1;
+      else if (scan.finalGrade === 'Grade B') summary.gradeB += 1;
+      else if (scan.finalGrade === 'Grade C') summary.gradeC += 1;
+      else if (scan.finalGrade === 'Grade D') summary.gradeD += 1;
+      else summary.invalid += 1;
+    });
+
+    const filterParts = [];
+    if (req.query.q) filterParts.push(`search="${String(req.query.q).slice(0, 80)}"`);
+    if (normalizeGrade(req.query.grade)) filterParts.push(`grade=${normalizeGrade(req.query.grade)}`);
+    if (req.query.from) filterParts.push(`from=${req.query.from}`);
+    if (req.query.to) filterParts.push(`to=${req.query.to}`);
+    if (req.query.lot) filterParts.push(`lot=${req.query.lot}`);
+
+    const lines = [];
+    lines.push('\ufeffArecanut prediction export');
+    lines.push(`Generated at,${csvCell(new Date().toISOString())}`);
+    lines.push(`Filters,${csvCell(filterParts.length ? filterParts.join('; ') : 'none')}`);
+    lines.push(`Matching predictions,${total}`);
+    lines.push(`Rows exported,${scans.length}`);
+    lines.push(`Total detected nuts,${summary.nuts}`);
+    lines.push(`Majority Grade A,${summary.gradeA}`);
+    lines.push(`Majority Grade B,${summary.gradeB}`);
+    lines.push(`Majority Grade C,${summary.gradeC}`);
+    lines.push(`Majority Grade D,${summary.gradeD}`);
+    lines.push(`Invalid / no detections,${summary.invalid}`);
+    if (total > scans.length) {
+      lines.push(`Note,Export limited to the most recent ${MAX_ROWS} matching predictions`);
+    }
+    lines.push('');
+    lines.push(
+      [
+        'Report ID',
+        'Scan ID',
+        'Filename',
+        'Created at',
+        'Final grade',
+        'Grade A',
+        'Grade B',
+        'Grade C',
+        'Grade D',
+        'Total count',
+        'Confidence',
+        'Quality score',
+        'Model version',
+        'Lot',
+        'Lot reference',
+      ]
+        .map(csvCell)
+        .join(',')
+    );
+
+    scans.forEach((scan) => {
+      const lot = scan.lot ? lotMap.get(String(scan.lot)) : null;
+      lines.push(
+        [
+          scan.reportId || '',
+          String(scan._id),
+          scan.filename || '',
+          scan.createdAt ? scan.createdAt.toISOString() : '',
+          scan.finalGrade || '',
+          scan.gradeA || 0,
+          scan.gradeB || 0,
+          scan.gradeC || 0,
+          scan.gradeD || 0,
+          scan.totalCount || 0,
+          scan.confidence ?? '',
+          scan.qualityScore ?? '',
+          scan.modelVersion || '',
+          lot?.name || '',
+          lot?.reference || '',
+        ]
+          .map(csvCell)
+          .join(',')
+      );
+    });
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="arecanut-history-${new Date().toISOString().slice(0, 10)}.csv"`
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(lines.join('\n'));
   })
 );
 

@@ -105,3 +105,42 @@ export function downloadName(reportId, suffix = 'report') {
   const safe = String(reportId || 'prediction').replace(/[^a-zA-Z0-9._-]/g, '_');
   return `arecanut-${suffix}-${safe}.pdf`;
 }
+
+const CURRENCY_SYMBOLS = {
+  INR: '₹',
+  USD: '$',
+  EUR: '€',
+  GBP: '£',
+  LKR: 'Rs',
+  NPR: 'Rs',
+  BDT: '৳',
+  PKR: 'Rs',
+};
+
+export function currencySymbol(currency = 'INR') {
+  return CURRENCY_SYMBOLS[String(currency || 'INR').toUpperCase()] || String(currency || 'INR');
+}
+
+export function formatCurrency(value, currency = 'INR', digits = 2) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  const symbol = currencySymbol(currency);
+  return `${symbol}${Number(value).toLocaleString('en-IN', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  })}`;
+}
+
+export function formatWeightKg(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  const number = Number(value);
+  const digits = Math.abs(number) >= 100 ? 1 : Math.abs(number) >= 1 ? 2 : 3;
+  return `${number.toLocaleString('en-IN', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  })} kg`;
+}
+
+export function csvDownloadName(prefix, value) {
+  const safe = String(value || 'export').replace(/[^a-zA-Z0-9._-]/g, '_');
+  return `arecanut-${prefix}-${safe}.csv`;
+}

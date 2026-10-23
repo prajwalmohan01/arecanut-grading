@@ -278,8 +278,7 @@ export default function Profile() {
       <Card className="flex items-start gap-3 p-4 text-xs leading-relaxed text-muted animate-in">
         <ProfileIcon width={17} height={17} className="mt-0.5" />
         <p>
-          Your data is scoped to your account. Images and reports are only accessible to you.
-          Session tokens are managed on the client and can be cleared by signing out.
+          © 2026 Prajwal Mohan | Arecanut Quality Grading System | AI-Powered Detection & Grading | Contact: +91 76767 59149
         </p>
       </Card>
 

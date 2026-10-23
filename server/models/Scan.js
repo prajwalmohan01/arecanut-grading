@@ -66,6 +66,13 @@ const scanSchema = new mongoose.Schema(
     imageWidth: { type: Number, default: null },
     imageHeight: { type: Number, default: null },
 
+    lot: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Lot',
+      default: null,
+      index: true,
+    },
+
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',

@@ -4,6 +4,7 @@ const { config, validateConfig } = require('./config');
 const createApp = require('./app');
 const { connectDatabase, disconnectDatabase } = require('./database');
 const { getModelArtifactStatus } = require('./services/modelService');
+const { ensureAdminFromEnv } = require('./services/adminService');
 const { ensureUploadDir } = require('./utils/files');
 
 async function start() {
@@ -42,6 +43,21 @@ async function start() {
     );
     process.exitCode = 1;
     return;
+  }
+
+  try {
+    const admin = await ensureAdminFromEnv();
+    if (admin.created) {
+      console.log(`[admin] Created admin user from .env: ${admin.username}`);
+    } else if (admin.promoted) {
+      console.log(`[admin] Promoted ${admin.username} to admin from .env`);
+    } else if (admin.skipped && admin.reason) {
+      console.log(`[admin] Skipped bootstrap: ${admin.reason}`);
+    } else {
+      console.log(`[admin] Admin user verified: ${admin.username}`);
+    }
+  } catch (error) {
+    console.warn(`[admin] Could not verify admin user: ${error.message}`);
   }
 
   const app = createApp();

@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const { config } = require('./config');
 const authRoutes = require('./routes/auth');
 const scanRoutes = require('./routes/scans');
+const lotRoutes = require('./routes/lots');
 const systemRoutes = require('./routes/system');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { ensureUploadDir } = require('./utils/files');
@@ -60,6 +61,7 @@ function createApp() {
 
   app.use('/api/auth', authRoutes);
   app.use('/api/scans', scanRoutes);
+  app.use('/api/lots', lotRoutes);
   app.use('/api', systemRoutes);
 
   app.get('/', (_req, res) => {

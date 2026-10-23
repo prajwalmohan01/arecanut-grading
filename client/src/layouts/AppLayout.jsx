@@ -42,9 +42,7 @@ function Brand() {
       </span>
       <div className="leading-tight">
         <p className="font-display text-lg font-semibold text-main">ARECANUT QUALITY GRADING SYSTEM</p>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted">
-          Arecanut AI
-        </p>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted"></p>
       </div>
     </div>
   );

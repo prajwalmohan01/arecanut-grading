@@ -27,7 +27,8 @@ function imageUrl(scan, kind) {
       ? scan.processedImage
       : scan.annotatedImage;
   if (!source) return null;
-  return `/api/scans/${scan._id}/image/${kind}`;
+  // Relative to the API base URL (the client already prefixes /api).
+  return `/scans/${scan._id}/image/${kind}`;
 }
 
 function serializeScan(scan, options = {}) {
@@ -51,6 +52,7 @@ function serializeScan(scan, options = {}) {
       C: doc.gradeC || 0,
       D: doc.gradeD || 0,
     },
+    lot: doc.lot ? String(doc.lot) : null,
     supportedGrades: Array.isArray(doc.supportedGrades) ? doc.supportedGrades : [],
     totalCount: doc.totalCount || 0,
     confidence: doc.confidence ?? null,

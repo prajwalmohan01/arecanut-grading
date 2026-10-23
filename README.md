@@ -175,6 +175,21 @@ Expected output includes `Match: True` and exit code `0`. The expected SHA-256 i
 
 ### 5. Create an admin user (optional)
 
+Add the following to `server\.env` and restart the API:
+
+```dotenv
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=choose_a_strong_password
+ADMIN_DISPLAY_NAME=Administrator
+```
+
+On startup the API verifies that account: it creates it when missing or promotes it to the
+`admin` role, but never overwrites an existing password. Placeholder passwords such as
+`replace_with_a_strong_password` are ignored. The account is stored in MongoDB with a
+bcrypt hash; `.env` is only the bootstrap source, not a plaintext login check.
+
+To set or reset the password manually:
+
 ```powershell
 cd server
 $env:ADMIN_USERNAME="admin"
@@ -229,6 +244,27 @@ The frontend proxies `/api` and `/uploads` to `http://localhost:5000` in develop
    - grade composition, image-level grade, confidence, quality heuristic,
    - an explicit notice when C/D or defects are not supported.
 4. Download the PDF report from the result or history page.
+5. Select multiple images in one go for a **batch**; it is grouped into a **lot** (created
+   automatically when you do not pick an existing one). A single image can optionally join a lot.
+6. Open **Lots** to review combined counts, enter an average nut weight and per-grade price,
+   and export the lot as CSV.
+7. Use **Export CSV** on the history page to download the currently filtered records plus a
+   summary block (opens in Excel; UTF-8 with BOM).
+
+### Batch grading, lots, and valuation
+
+- **Batch upload** is client-driven: the browser posts images one at a time to
+  `POST /api/scans/predict`, so the CPU model is never asked to run two predictions at once.
+  A failed image does not stop the rest of the queue.
+- A **lot** groups scans and stores optional pricing assumptions (`prices.A`…`prices.D`,
+  `avgNutWeightG`, `currency`). Deleting a lot keeps its predictions in history and only
+  clears their lot assignment.
+- The estimated value is
+  `nuts × avgNutWeightG ÷ 1000 × pricePerKg`, summed per grade. `avgNutWeightG` is a
+  user-provided assumption; the bundled model measures boxes in image space only, so weight
+  is **not** measured from the photo. The UI and CSV label the result as an estimate.
+- The history CSV contains a summary block (filters, counts, majority grades, detected nuts)
+  followed by a blank line and the per-prediction table.
 
 No training runs at startup or during prediction.
 
@@ -443,17 +479,30 @@ All scan endpoints require `Authorization: Bearer <token>`.
 | --- | --- | --- |
 | `POST` | `/api/auth/signup` | Create account |
 | `POST` | `/api/auth/login` | Obtain JWT |
-| `POST` | `/api/scans/predict` | Upload image (multipart field `file`) and run inference |
+| `POST` | `/api/scans/predict` | Upload image (multipart field `file`, optional `lotId`) and run inference |
 | `GET` | `/api/scans/:id` | Scan details |
 | `GET` | `/api/scans/:id/image/:kind` | `original`, `annotated` or `processed` JPEG |
 | `GET` | `/api/scans/:id/report.pdf` | PDF report |
-| `GET` | `/api/scans/history` | Paginated history, filters, summary |
+| `GET` | `/api/scans/history` | Paginated history, filters (`grade`, `from`, `to`, `q`, `lot`, `sort`), summary |
+| `GET` | `/api/scans/export.csv` | Filtered history with a summary block (`grade`, `from`, `to`, `q`, `lot`, `sort`) |
 | `GET` | `/api/scans/stats` | Aggregate statistics |
+| `POST` | `/api/lots` | Create a lot with optional prices and average nut weight |
+| `GET` | `/api/lots` | List lots with combined counts and valuation |
+| `GET` | `/api/lots/:id` | Lot summary plus its scans |
+| `PATCH` | `/api/lots/:id` | Update lot details, prices, or average nut weight |
+| `GET` | `/api/lots/:id/export.csv` | Lot summary and per-scan CSV |
+| `DELETE` | `/api/lots/:id` | Delete a lot; its scans are unassigned, not deleted |
 | `GET` | `/api/health` | Server, database and model readiness |
 
 A prediction response contains `gradeA`, `gradeB`, `gradeC`, `gradeD`, `totalCount`,
-`finalGrade`, and a `scan` object with `gradeCounts`, `supportedGrades`, `detections`,
+`finalGrade`, and a `scan` object with `gradeCounts`, `supportedGrades`, `lot`, `detections`,
 `warnings`, and model metadata.
+
+Lot valuation uses this formula per grade, then sums the result:
+
+```text
+estimated value = detected nuts × avgNutWeightG ÷ 1000 × pricePerKg
+```
 
 ## PDF report
 

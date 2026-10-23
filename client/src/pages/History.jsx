@@ -20,6 +20,7 @@ import {
   UploadIcon,
 } from '../components/Icons';
 import {
+  csvDownloadName,
   downloadName,
   formatDateTime,
   formatNumber,
@@ -130,6 +131,7 @@ export default function History() {
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -199,6 +201,29 @@ export default function History() {
     navigate(`/compare?ids=${selectedIds.join(',')}`);
   }
 
+  async function exportCsv() {
+    const params = new URLSearchParams();
+    if (query.q) params.set('q', query.q);
+    if (query.grade) params.set('grade', query.grade);
+    if (query.from) params.set('from', query.from);
+    if (query.to) params.set('to', query.to);
+    if (query.sort) params.set('sort', query.sort);
+    const search = params.toString();
+
+    setExporting(true);
+    try {
+      await downloadApiFile(
+        `/scans/export.csv${search ? `?${search}` : ''}`,
+        csvDownloadName('history', new Date().toISOString().slice(0, 10))
+      );
+      toast.success('History CSV downloaded.');
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Could not export the history.'));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function downloadPdf(scan) {
     setDownloadingId(scan.id);
     try {
@@ -249,6 +274,10 @@ export default function History() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={exportCsv} disabled={exporting || loading}>
+            {exporting ? <Spinner size={15} /> : <DownloadIcon width={16} height={16} />}
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </Button>
           <Button
             variant="secondary"
             onClick={goCompare}

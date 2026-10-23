@@ -36,6 +36,9 @@ export default function Navbar() {
               <NavLink to="/history" className={navClass}>
                 History
               </NavLink>
+              <NavLink to="/lots" className={navClass}>
+                Lots
+              </NavLink>
               <NavLink to="/performance" className={navClass}>
                 Model
               </NavLink>
@@ -110,6 +113,9 @@ export default function Navbar() {
                 </NavLink>
                 <NavLink to="/history" className={navClass} onClick={() => setOpen(false)}>
                   History
+                </NavLink>
+                <NavLink to="/lots" className={navClass} onClick={() => setOpen(false)}>
+                  Lots &amp; batches
                 </NavLink>
                 <NavLink to="/performance" className={navClass} onClick={() => setOpen(false)}>
                   Model performance

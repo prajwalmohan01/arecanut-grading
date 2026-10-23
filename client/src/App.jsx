@@ -10,6 +10,8 @@ import Dashboard from './pages/Dashboard';
 import Upload from './pages/Upload';
 import Result from './pages/Result';
 import History from './pages/History';
+import Lots from './pages/Lots';
+import LotDetail from './pages/LotDetail';
 import Compare from './pages/Compare';
 import Performance from './pages/Performance';
 import Profile from './pages/Profile';
@@ -128,6 +130,22 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <History />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/lots"
+              element={
+                <ProtectedRoute>
+                  <Lots />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/lots/:id"
+              element={
+                <ProtectedRoute>
+                  <LotDetail />
                 </ProtectedRoute>
               }
             />

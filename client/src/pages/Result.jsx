@@ -15,6 +15,7 @@ import {
   CompareIcon,
   DownloadIcon,
   HistoryIcon,
+  LayersIcon,
   SparkIcon,
   TrashIcon,
   UploadIcon,
@@ -227,6 +228,15 @@ export default function Result() {
               <span className="pill">{formatDateTime(scan.createdAt)}</span>
               {scan.processingMs !== null && (
                 <span className="pill">{(scan.processingMs / 1000).toFixed(2)}s inference</span>
+              )}
+              {scan.lot && (
+                <Link
+                  to={`/lots/${scan.lot}`}
+                  className="pill inline-flex items-center gap-1 hover:opacity-80"
+                  title="Open the lot this prediction belongs to"
+                >
+                  <LayersIcon width={12} height={12} /> View lot
+                </Link>
               )}
             </div>
             <h2 className="mt-3 truncate font-display text-2xl font-semibold text-main sm:text-3xl">

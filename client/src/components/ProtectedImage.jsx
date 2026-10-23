@@ -19,7 +19,11 @@ export function useAuthImage(url) {
     setLoading(true);
     setError(null);
 
-    API.get(url, { responseType: 'blob' })
+    // Accept both '/scans/...' and legacy '/api/scans/...' URLs, because the
+    // axios instance already includes the '/api' base path.
+    const path = url.replace(/^\/api(?=\/)/, '');
+
+    API.get(path, { responseType: 'blob' })
       .then((response) => {
         if (!alive) return;
         objectUrl = URL.createObjectURL(response.data);
