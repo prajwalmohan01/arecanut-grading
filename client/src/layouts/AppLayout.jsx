@@ -254,9 +254,8 @@ export default function AppLayout({ children }) {
 
         <footer className="mx-auto max-w-[1500px] px-4 pb-8 sm:px-6 lg:px-8">
           <p className="text-[11px] leading-relaxed text-muted">
-            ARECANUT QUALITY GRADING SYSTEM uses a preserved two-class YOLOv8 detector (GradeA/GradeB). Defect
-            detection, segmentation, and physical size calibration are not supported by
-            this model. Results are automated estimates, not certified commercial grading.
+            ARECANUT QUALITY GRADING SYSTEM © 2026 Prajwal Mohan. All Rights Reserved.
+
           </p>
         </footer>
       </div>
