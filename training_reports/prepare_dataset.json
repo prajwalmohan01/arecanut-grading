@@ -1,9 +1,9 @@
 {
-  "generated_at": "2026-10-22T17:04:51.648339+00:00",
-  "output_dir": "C:\\Users\\Admin\\Projects\\arecanut-grading\\training_cache\\dataset",
+  "generated_at": "2026-10-23T07:09:58.038424+00:00",
+  "output_dir": "training_cache/dataset",
   "ready": false,
   "errors": [
-    "No --data supplied. No inspected Kaggle dataset contains YOLO bounding-box annotations, so there is nothing legitimate to prepare."
+    "No annotated dataset found. Put a YOLO detection dataset in datasets/arecanut_grades (see datasets/README.md) or pass --data <folder>. Unlabelled images cannot be used for detector training."
   ],
   "warnings": []
 }

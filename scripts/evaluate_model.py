@@ -20,7 +20,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.datasets import PROJECT_ROOT, REPORTS_DIR, write_json  # noqa: E402
+from scripts.datasets import (  # noqa: E402
+    PROJECT_ROOT,
+    REPORTS_DIR,
+    display_path,
+    write_json,
+)
 
 ACTIVE_MODEL = PROJECT_ROOT / "ml_service" / "weights" / "best.pt"
 EVALUATION_PATH = PROJECT_ROOT / "ml_service" / "evaluation" / "metrics.json"
@@ -93,11 +98,11 @@ def main() -> int:
 
     report = {
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
-        "model_path": str(model_path),
+        "model_path": display_path(model_path),
         "model_sha256": sha256_of(model_path),
         "model_size_bytes": model_path.stat().st_size,
         "model_classes": names,
-        "dataset": str(data_yaml),
+        "dataset": display_path(data_yaml),
         "split": args.split,
         "settings": {"imgsz": args.imgsz, "conf": args.conf, "iou": args.iou},
         "metrics": metrics,

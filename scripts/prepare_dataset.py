@@ -25,10 +25,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.datasets import (  # noqa: E402
+    DEFAULT_DATASET_DIR,
     IMAGE_EXTENSIONS,
     PROJECT_ROOT,
     REPORTS_DIR,
     TRAINING_CACHE,
+    display_path,
+    portable_text,
     read_yolo_names,
     utc_now,
     write_json,
@@ -142,12 +145,25 @@ def materialise(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
 
 
+def has_label_files(root: Path) -> bool:
+    """True when a YOLO ``labels`` tree with at least one .txt file exists."""
+    if not root.is_dir():
+        return False
+    for path in root.rglob("*.txt"):
+        if "labels" in [part.lower() for part in path.parts]:
+            return True
+    return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--data",
         required=False,
-        help="Root directory (or data.yaml) of an existing YOLO detection dataset.",
+        help=(
+            "Root directory (or data.yaml) of an existing YOLO detection dataset. "
+            f"Defaults to {display_path(DEFAULT_DATASET_DIR)} when it contains labels."
+        ),
     )
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT), help="Prepared dataset directory.")
     parser.add_argument("--train", type=float, default=0.7)
@@ -163,21 +179,26 @@ def main() -> int:
 
     report: dict = {
         "generated_at": utc_now(),
-        "output_dir": str(Path(args.output).resolve()),
+        "output_dir": display_path(args.output),
         "ready": False,
         "errors": [],
         "warnings": [],
     }
 
     if not args.data:
-        report["errors"].append(
-            "No --data supplied. No inspected Kaggle dataset contains YOLO bounding-box "
-            "annotations, so there is nothing legitimate to prepare."
-        )
-        write_json(REPORTS_DIR / "prepare_dataset.json", report)
-        print("\n".join(report["errors"]))
-        print("Wrote", REPORTS_DIR / "prepare_dataset.json")
-        return 2
+        if has_label_files(DEFAULT_DATASET_DIR):
+            args.data = str(DEFAULT_DATASET_DIR)
+            print(f"Using project-local dataset: {display_path(DEFAULT_DATASET_DIR)}")
+        else:
+            report["errors"].append(
+                "No annotated dataset found. Put a YOLO detection dataset in "
+                f"{display_path(DEFAULT_DATASET_DIR)} (see datasets/README.md) or pass "
+                "--data <folder>. Unlabelled images cannot be used for detector training."
+            )
+            write_json(REPORTS_DIR / "prepare_dataset.json", report)
+            print("\n".join(report["errors"]))
+            print("Wrote", display_path(REPORTS_DIR / "prepare_dataset.json"))
+            return 2
 
     source = Path(args.data).expanduser().resolve()
     if source.is_file() and source.suffix.lower() in {".yaml", ".yml"}:
@@ -185,7 +206,7 @@ def main() -> int:
     else:
         source_root = source
     if not source_root.is_dir():
-        report["errors"].append(f"Dataset directory not found: {source_root}")
+        report["errors"].append(f"Dataset directory not found: {display_path(source_root)}")
         write_json(REPORTS_DIR / "prepare_dataset.json", report)
         print(report["errors"][0])
         return 2
@@ -201,15 +222,15 @@ def main() -> int:
             break
     if not class_names:
         report["errors"].append(
-            f"No data.yaml with a 'names' list was found under {source_root}. "
+            f"No data.yaml with a 'names' list was found under {display_path(source_root)}. "
             "YOLO detection training needs explicit class names."
         )
         write_json(REPORTS_DIR / "prepare_dataset.json", report)
         print(report["errors"][0])
         return 2
 
-    report["source"] = str(source_root)
-    report["data_yaml"] = str(data_yaml)
+    report["source"] = display_path(source_root)
+    report["data_yaml"] = display_path(data_yaml)
     report["class_names"] = class_names
     report["class_index_mapping"] = {index: name for index, name in enumerate(class_names)}
 
@@ -222,7 +243,7 @@ def main() -> int:
 
     pairs, problems = find_pairs(source_root)
     report["pairs_found"] = len(pairs)
-    report["problems"] = problems[:50]
+    report["problems"] = [portable_text(problem) for problem in problems[:50]]
     if not pairs:
         report["errors"].append(
             "No image/label pairs found. Expected labels/**/*.txt next to images/**/*.jpg."
@@ -240,7 +261,7 @@ def main() -> int:
             label_errors.extend(errors[:5])
         pair["boxes"] = lines
     report["total_boxes"] = total_boxes
-    report["label_errors"] = label_errors[:50]
+    report["label_errors"] = [portable_text(error) for error in label_errors[:50]]
     if label_errors:
         report["errors"].append(
             f"{len(label_errors)} annotation problem(s) found; fix them before training."
@@ -312,10 +333,10 @@ def main() -> int:
     (output / "data.yaml").write_text(
         "\n".join(
             [
-                f"path: {output.as_posix()}",
-                f"train: images/train",
-                f"val: images/val",
-                f"test: images/test",
+                "# Relative to this file so the prepared dataset stays portable.",
+                "train: images/train",
+                "val: images/val",
+                "test: images/test",
                 f"nc: {len(class_names)}",
                 "names:",
                 *[f"  {index}: {name}" for index, name in enumerate(class_names)],
@@ -328,8 +349,8 @@ def main() -> int:
     report.update(
         {
             "ready": True,
-            "output_dir": str(output),
-            "data_yaml": str(output / "data.yaml"),
+            "output_dir": display_path(output),
+            "data_yaml": display_path(output / "data.yaml"),
             "splits": counts,
             "class_boxes_per_split": class_counts,
             "dedupe_method": (

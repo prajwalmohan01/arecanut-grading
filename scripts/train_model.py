@@ -25,7 +25,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from scripts.datasets import PROJECT_ROOT, REPORTS_DIR, write_json  # noqa: E402
+from scripts.datasets import (  # noqa: E402
+    PROJECT_ROOT,
+    REPORTS_DIR,
+    display_path,
+    portable_text,
+    write_json,
+)
 
 ACTIVE_MODEL = PROJECT_ROOT / "ml_service" / "weights" / "best.pt"
 METADATA_PATH = PROJECT_ROOT / "ml_service" / "model_metadata.json"
@@ -128,8 +134,8 @@ def train(args) -> int:
     report_path = REPORTS_DIR / f"training_{run_name}.json"
 
     config = {
-        "base_weights": str(weights),
-        "data": str(data_yaml),
+        "base_weights": display_path(weights),
+        "data": display_path(data_yaml),
         "epochs": args.epochs,
         "imgsz": args.imgsz,
         "batch": batch,
@@ -137,7 +143,7 @@ def train(args) -> int:
         "workers": args.workers,
         "seed": args.seed,
         "patience": args.patience,
-        "project": str(CANDIDATE_DIR),
+        "project": display_path(CANDIDATE_DIR),
         "name": run_name,
         "task": "detect",
     }
@@ -145,7 +151,7 @@ def train(args) -> int:
         "started_at": datetime.now(timezone.utc).isoformat(),
         "config": config,
         "status": "running",
-        "backup": str(backup) if backup else None,
+        "backup": display_path(backup) if backup else None,
         "errors": [],
     }
     write_json(report_path, report)
@@ -171,7 +177,7 @@ def train(args) -> int:
         )
     except Exception as exc:
         report["status"] = "failed"
-        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        report["errors"].append(portable_text(f"{type(exc).__name__}: {exc}"))
         write_json(report_path, report)
         print(f"Training failed: {exc}")
         return 1
@@ -186,7 +192,7 @@ def train(args) -> int:
         {
             "finished_at": datetime.now(timezone.utc).isoformat(),
             "status": "trained" if best.is_file() else "failed",
-            "candidate_path": str(best) if best.is_file() else None,
+            "candidate_path": display_path(best) if best.is_file() else None,
             "candidate_sha256": sha256_of(best) if best.is_file() else None,
             "candidate_size_bytes": best.stat().st_size if best.is_file() else None,
             "ultralytics_version": _ultralytics_version(),
@@ -201,7 +207,7 @@ def train(args) -> int:
             val = candidate.val(data=str(data_yaml), split="val", verbose=False)
             report["validation_metrics"] = metrics_from_results(val)
         except Exception as exc:
-            report["errors"].append(f"Post-training validation failed: {exc}")
+            report["errors"].append(portable_text(f"Post-training validation failed: {exc}"))
 
     write_json(report_path, report)
     print(f"Wrote {report_path}")
@@ -327,13 +333,13 @@ def promote(args) -> int:
             "supported_grades": supported,
             "unsupported_grades": unsupported,
             "trained_at": datetime.now(timezone.utc).isoformat(),
-            "training_report": str(evaluation_path),
+            "training_report": display_path(evaluation_path),
             "evaluation": {
                 "available": True,
-                "source": str(EVALUATION_PATH),
+                "source": display_path(EVALUATION_PATH),
                 "metrics": evaluation.get("metrics", {}),
             },
-            "backup": str(backup) if backup else None,
+            "backup": display_path(backup) if backup else None,
         }
     )
     METADATA_PATH.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")

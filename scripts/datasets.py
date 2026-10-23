@@ -18,10 +18,44 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# Project-local, git-ignored location for a genuinely annotated YOLO dataset.
+# Keeping it inside the repo folder makes the workflow portable across PCs; the
+# raw images/labels themselves are never committed.
+DEFAULT_DATASET_DIR = PROJECT_ROOT / "datasets" / "arecanut_grades"
 REPORTS_DIR = PROJECT_ROOT / "training_reports"
 TRAINING_CACHE = Path(
     os.environ.get("ARECANUT_TRAINING_CACHE", str(PROJECT_ROOT / "training_cache"))
 ).expanduser()
+
+
+def display_path(value) -> str:
+    """Return a portable path for reports: project-relative or home-relative."""
+    try:
+        path = Path(value).expanduser().resolve()
+    except OSError:
+        return str(value)
+    try:
+        return path.relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        pass
+    try:
+        return "~/" + path.relative_to(Path.home()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def portable_text(value) -> str:
+    """Replace machine-specific absolute paths with portable placeholders."""
+    text = str(value)
+    replacements = (
+        (str(PROJECT_ROOT) + os.sep, ""),
+        (PROJECT_ROOT.as_posix() + "/", ""),
+        (str(Path.home()) + os.sep, "~/"),
+        (Path.home().as_posix() + "/", "~/"),
+    )
+    for source, target in replacements:
+        text = text.replace(source, target)
+    return text
 
 # The three datasets required by the project brief. KaggleHub resolves and
 # caches these; we never hardcode the cache location.
@@ -237,7 +271,7 @@ def inspect_dataset(name: str, path: Path, scan_archives: bool = False) -> dict:
     report: dict = {
         "name": name,
         "id": DATASETS[name]["id"],
-        "path": str(path),
+        "path": display_path(path),
         "inspected_at": utc_now(),
         "exists": path.exists(),
         "errors": [],

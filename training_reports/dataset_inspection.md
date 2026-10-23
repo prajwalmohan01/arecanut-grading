@@ -1,6 +1,6 @@
 # Dataset inspection report
 
-Generated: 2026-10-22T16:59:54.665572+00:00
+Generated: 2026-10-23T07:06:00.580062+00:00
 KaggleHub: 1.0.3
 
 ## Summary
@@ -15,7 +15,7 @@ KaggleHub: 1.0.3
 
 ### duvacs/new-arecanut
 
-- Resolved path: `C:\Users\Admin\.cache\kagglehub\datasets\duvacs\new-arecanut\versions\1`
+- Resolved path: `~/.cache/kagglehub/datasets/duvacs/new-arecanut/versions/1`
 - Total files: 1167
 - Image files: 1167
 - Readable images: 1167
@@ -29,7 +29,7 @@ KaggleHub: 1.0.3
 
 ### subrahmanya090/arecanut
 
-- Resolved path: `C:\Users\Admin\.cache\kagglehub\datasets\subrahmanya090\arecanut`
+- Resolved path: `~/.cache/kagglehub/datasets/subrahmanya090/arecanut`
 - Total files: 1
 - Image files: 0
 - Readable images: 0
@@ -45,7 +45,7 @@ KaggleHub: 1.0.3
 
 ### tejpaviraj/arecanut
 
-- Resolved path: `C:\Users\Admin\.cache\kagglehub\datasets\tejpaviraj\arecanut`
+- Resolved path: `~/.cache/kagglehub/datasets/tejpaviraj/arecanut`
 - Total files: 1
 - Image files: 0
 - Readable images: 0
@@ -61,4 +61,4 @@ KaggleHub: 1.0.3
 
 ## Grade C/D conclusion
 
-No inspected dataset provides both explicit Grade C/D labels and individual-nut bounding boxes. The delivered datasets are image-level classifications (ripeness and plant-disease folders) with no nut-level grade annotations. Grade C/D cannot be trained from these files without fabricating labels. The current GradeA/GradeB detector is preserved. To enable C/D, annotate individual nuts with YOLO boxes labelled GradeA/GradeB/GradeC/GradeD, point scripts/prepare_dataset.py at that dataset, then run scripts/train_model.py and scripts/evaluate_model.py.
+No inspected dataset provides both explicit Grade C/D labels and individual-nut bounding boxes. The delivered datasets are image-level classifications (ripeness and plant-disease folders) with no nut-level grade annotations. Grade C/D cannot be trained from these files without fabricating labels. The current GradeA/GradeB detector is preserved. To enable C/D, annotate individual nuts with YOLO boxes labelled GradeA/GradeB/GradeC/GradeD, put the dataset in datasets/arecanut_grades (see datasets/README.md), then run scripts/prepare_dataset.py, scripts/train_model.py and scripts/evaluate_model.py.

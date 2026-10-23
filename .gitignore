@@ -21,7 +21,8 @@ ml_service/annotated/
 ml_service/temp/
 
 # Raw datasets and Kaggle cache (never commit)
-datasets/
+datasets/*
+!datasets/README.md
 data_*/
 training_cache/
 .cache/

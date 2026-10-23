@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-22T16:59:54.665572+00:00",
+  "generated_at": "2026-10-23T07:06:00.580062+00:00",
   "kagglehub_version": "1.0.3",
   "datasets_requested": {
     "duvacs_new_arecanut": "duvacs/new-arecanut",
@@ -10,8 +10,8 @@
     {
       "name": "duvacs_new_arecanut",
       "id": "duvacs/new-arecanut",
-      "path": "C:\\Users\\Admin\\.cache\\kagglehub\\datasets\\duvacs\\new-arecanut\\versions\\1",
-      "inspected_at": "2026-10-22T16:59:57.389489+00:00",
+      "path": "~/.cache/kagglehub/datasets/duvacs/new-arecanut/versions/1",
+      "inspected_at": "2026-10-23T07:06:02.546968+00:00",
       "exists": true,
       "errors": [],
       "total_files": 1167,
@@ -60,8 +60,8 @@
     {
       "name": "subrahmanya090_arecanut",
       "id": "subrahmanya090/arecanut",
-      "path": "C:\\Users\\Admin\\.cache\\kagglehub\\datasets\\subrahmanya090\\arecanut",
-      "inspected_at": "2026-10-22T17:00:01.942084+00:00",
+      "path": "~/.cache/kagglehub/datasets/subrahmanya090/arecanut",
+      "inspected_at": "2026-10-23T07:06:05.739295+00:00",
       "exists": true,
       "errors": [],
       "total_files": 1,
@@ -98,7 +98,7 @@
             "truncated": true,
             "error": "TruncatedDataError: ",
             "time_budget_exceeded": false,
-            "elapsed_seconds": 5.5
+            "elapsed_seconds": 9.0
           }
         }
       ],
@@ -130,8 +130,8 @@
     {
       "name": "tejpaviraj_arecanut",
       "id": "tejpaviraj/arecanut",
-      "path": "C:\\Users\\Admin\\.cache\\kagglehub\\datasets\\tejpaviraj\\arecanut",
-      "inspected_at": "2026-10-22T17:00:07.682558+00:00",
+      "path": "~/.cache/kagglehub/datasets/tejpaviraj/arecanut",
+      "inspected_at": "2026-10-23T07:06:15.153240+00:00",
       "exists": true,
       "errors": [],
       "total_files": 1,
@@ -176,7 +176,7 @@
             "truncated": true,
             "error": "TruncatedDataError: ",
             "time_budget_exceeded": false,
-            "elapsed_seconds": 9.1
+            "elapsed_seconds": 19.6
           }
         }
       ],
@@ -214,5 +214,5 @@
       "expected_content": "Arecanut plant/leaf disease image folders (classification)."
     }
   ],
-  "grade_cd_conclusion": "No inspected dataset provides both explicit Grade C/D labels and individual-nut bounding boxes. The delivered datasets are image-level classifications (ripeness and plant-disease folders) with no nut-level grade annotations. Grade C/D cannot be trained from these files without fabricating labels. The current GradeA/GradeB detector is preserved. To enable C/D, annotate individual nuts with YOLO boxes labelled GradeA/GradeB/GradeC/GradeD, point scripts/prepare_dataset.py at that dataset, then run scripts/train_model.py and scripts/evaluate_model.py."
+  "grade_cd_conclusion": "No inspected dataset provides both explicit Grade C/D labels and individual-nut bounding boxes. The delivered datasets are image-level classifications (ripeness and plant-disease folders) with no nut-level grade annotations. Grade C/D cannot be trained from these files without fabricating labels. The current GradeA/GradeB detector is preserved. To enable C/D, annotate individual nuts with YOLO boxes labelled GradeA/GradeB/GradeC/GradeD, put the dataset in datasets/arecanut_grades (see datasets/README.md), then run scripts/prepare_dataset.py, scripts/train_model.py and scripts/evaluate_model.py."
 }

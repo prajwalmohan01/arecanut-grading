@@ -63,11 +63,16 @@ checksum and documented limitations.
 │   ├── train_model.py
 │   ├── evaluate_model.py
 │   └── verify_model.py
+├── datasets/
+│   └── README.md                 # Where to put a real annotated dataset (data is ignored)
 └── training_reports/             # Real inspection/blocker reports
 ```
 
 Raw datasets, Kaggle caches, training runs, candidate weights, backups and uploads are
 git-ignored and are never committed.
+
+All scripts resolve paths relative to the project root (or use `~` for the Kaggle cache),
+so no `C:\Users\...` path is required and the project can be moved to another PC.
 
 ## Requirements
 
@@ -256,7 +261,14 @@ Inspect an already-downloaded copy without network access:
 
 ```powershell
 python scripts\inspect_datasets.py --no-download `
-  --dataset-path duvacs_new_arecanut="C:\path\to\duvacs"
+  --dataset-path duvacs_new_arecanut=".\\datasets\\inspection\\duvacs"
+```
+
+or point it at KaggleHub's cache using a portable environment variable:
+
+```powershell
+python scripts\inspect_datasets.py --no-download `
+  --dataset-path duvacs_new_arecanut="$env:USERPROFILE\\.cache\\kagglehub\\datasets\\duvacs\\new-arecanut\\versions\\1"
 ```
 
 Reports are written to `training_reports/dataset_inspection.json` and `.md`.
@@ -265,22 +277,26 @@ KaggleHub caches raw data outside the repository. If Kaggle asks for credentials
 standard Kaggle mechanism (`%USERPROFILE%\.kaggle\kaggle.json` or the
 `KAGGLE_USERNAME`/`KAGGLE_KEY` environment variables). Never put credentials in the repo.
 
-### 2. Supply a genuine YOLO detection dataset
+### 2. Put a genuine YOLO detection dataset in the project
 
-Required layout:
+Place it here (this exact folder is detected automatically):
 
 ```text
-<dataset>/
-├── data.yaml                  # names: [GradeA, GradeB, GradeC, GradeD]
-├── images/
-│   ├── train/
-│   ├── val/
-│   └── test/
-└── labels/
-    ├── train/
-    ├── val/
-    └── test/
+datasets/
+└── arecanut_grades/
+    ├── data.yaml              # names: [GradeA, GradeB, GradeC, GradeD]
+    ├── images/
+    │   ├── train/
+    │   ├── val/
+    │   └── test/
+    └── labels/
+        ├── train/
+        ├── val/
+        └── test/
 ```
+
+See `datasets/README.md` for the label format and annotation guidance. The folder is
+git-ignored, so the images/labels stay on your PC while the workflow remains portable.
 
 Each label file contains one line per nut:
 `class_id x_center y_center width height` with normalised coordinates (0–1).
@@ -291,20 +307,23 @@ If your data has no splits, place all image/label pairs anywhere under `images/`
 ### 3. Prepare the dataset
 
 ```powershell
-python scripts\prepare_dataset.py --data "C:\path\to\your-yolo-dataset"
+python scripts\prepare_dataset.py
 ```
+
+`prepare_dataset.py` uses `datasets/arecanut_grades` automatically. To use a different
+folder, pass `--data .\datasets\other-dataset`.
 
 - Validates every label and rejects malformed boxes/classes.
 - Removes exact duplicate images by SHA-256 by default.
 - Creates a deterministic split and guarantees a non-empty validation set.
-- Writes prepared data to `training_cache/dataset` (git-ignored).
+- Writes prepared data to `training_cache/dataset` (git-ignored, project-relative).
 - If no real annotated dataset is supplied, it writes a blocker report and exits with
   code `2` instead of inventing data.
 
 Optional near-duplicate removal:
 
 ```powershell
-python scripts\prepare_dataset.py --data "C:\path\to\dataset" --near-duplicates
+python scripts\prepare_dataset.py --near-duplicates
 ```
 
 Use this deliberately: the coarse average hash can merge genuinely different nuts.

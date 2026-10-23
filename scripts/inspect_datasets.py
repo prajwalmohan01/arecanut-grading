@@ -3,8 +3,8 @@
 Manual use only:
 
     python scripts/inspect_datasets.py
-    python scripts/inspect_datasets.py --no-download --dataset-path duvacs_new_arecanut="C:\\cache\\duvacs"
-    python scripts/inspect_datasets.py --no-download --dataset-path tejpaviraj_arecanut="C:\\cache\\tejpaviraj"
+    python scripts/inspect_datasets.py --no-download --dataset-path duvacs_new_arecanut=".\\datasets\\duvacs"
+    python scripts/inspect_datasets.py --no-download --dataset-path tejpaviraj_arecanut="$env:USERPROFILE\\.cache\\kagglehub\\datasets\\tejpaviraj\\arecanut"
 
 Raw datasets stay in the KaggleHub cache. Only the JSON/Markdown report is
 written into the project (``training_reports/``).
@@ -227,8 +227,10 @@ def main() -> int:
             "grade annotations. Grade C/D cannot be trained from these files without "
             "fabricating labels. The current GradeA/GradeB detector is preserved. "
             "To enable C/D, annotate individual nuts with YOLO boxes labelled "
-            "GradeA/GradeB/GradeC/GradeD, point scripts/prepare_dataset.py at that "
-            "dataset, then run scripts/train_model.py and scripts/evaluate_model.py."
+            "GradeA/GradeB/GradeC/GradeD, put the dataset in "
+            "datasets/arecanut_grades (see datasets/README.md), then run "
+            "scripts/prepare_dataset.py, scripts/train_model.py and "
+            "scripts/evaluate_model.py."
         )
 
     output = Path(args.output)
