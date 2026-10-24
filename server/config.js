@@ -44,6 +44,9 @@ const config = {
   evaluationPath: process.env.EVALUATION_METRICS_PATH
     ? path.resolve(ROOT_DIR, process.env.EVALUATION_METRICS_PATH)
     : path.join(ROOT_DIR, 'ml_service', 'evaluation', 'metrics.json'),
+  xrayDatasetPath: process.env.XRAY_DATASET_REPORT_PATH
+    ? path.resolve(ROOT_DIR, process.env.XRAY_DATASET_REPORT_PATH)
+    : path.join(ROOT_DIR, 'training_reports', 'xray_dataset.json'),
   pythonScriptPath: path.join(
     ROOT_DIR,
     'ml_service',

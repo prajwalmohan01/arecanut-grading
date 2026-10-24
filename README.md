@@ -375,6 +375,68 @@ Inspection downloads only the annotation file for the 18.3 GB
 `alwyndsouza21092/arecanut-detection-dataset-1` dataset. The full image archive is never
 downloaded just to inspect labels.
 
+### Optional X-ray dataset (separate from the active A-D model)
+
+The X-ArecaNet data can be downloaded and prepared explicitly for experiments, but it is
+not an application Grade A/B/C/D dataset. It contains 916 individual X-ray images with
+923 boxes and three verified source grades:
+
+| Source category | Source grade | Prepared class | A-D coverage |
+| ---: | --- | --- | --- |
+| 0 | Grade1 | `XrayGrade1` | none |
+| 1 | Grade2 | `XrayGrade2` | none |
+| 2 | Grade3 | `XrayGrade3` | none |
+
+The mapping is verified from the original Mendeley archive (`G1/G2/G3` folders and
+`0/1/2` labels) and the X-ArecaNet paper. The Hugging Face category names remain numeric
+strings `"0"`, `"1"`, `"2"`. Do not rename them to Grade A/B/C/D without independently
+verified labels. X-ray images are also a different domain from ordinary tray photos and
+must not be mixed into the active photo dataset.
+
+Windows PowerShell commands (each step is explicit; nothing runs at startup):
+
+```powershell
+# Install optional dataset dependencies without replacing the NumPy/Torch stack
+python -m pip install -r scripts\requirements-xray.txt
+
+# 1. Download and preserve a local raw copy under datasets/arecanut_xray/raw
+python scripts\download_xray_dataset.py
+
+# Check the existing copy without downloading
+python scripts\download_xray_dataset.py --check
+
+# 2. Validate every annotation and create the separate YOLO dataset
+python scripts\prepare_xray_dataset.py
+
+# 3. Optional: import manually annotated X-ray images (YOLO format)
+python scripts\import_xray_annotations.py --data .\path\to\annotated_yolo
+python scripts\prepare_xray_dataset.py --include-manual
+```
+
+Prepared data is written to `training_cache/xray_dataset` with class names
+`XrayGrade1/2/3`. The source `Training`/`Validation` split is preserved; the source has
+no test split, so test is 0. The preparer excludes conflicting exact duplicates and
+reports filename/category mismatches instead of silently correcting them. The app's
+Performance page shows the generated report only when it exists.
+
+An X-ray candidate can be trained/evaluated explicitly, but it is not an A-D app model:
+
+```powershell
+python scripts\train_model.py `
+  --data training_cache\xray_dataset\data.yaml `
+  --epochs 60 `
+  --device cpu
+
+python scripts\evaluate_model.py `
+  --model ml_service\weights\candidates\run_<timestamp>\weights\best.pt `
+  --data training_cache\xray_dataset\data.yaml `
+  --split val
+```
+
+Do not promote it as the application model. The existing promotion gate only recognises
+`GradeA`–`GradeD`; `XrayGrade1/2/3` stay separate and cannot turn into A-D support.
+`ml_service/weights/best.pt` is not changed by download, preparation, or training.
+
 ### 1. Get and inspect data (optional, for inspection only)
 
 ```powershell

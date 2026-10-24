@@ -1,0 +1,8 @@
+# Optional dependencies for the explicit Hugging Face X-ray download workflow.
+# Install these only when you intend to download/prepare the X-ray dataset.
+# Keep NumPy below 2 so the existing PyTorch 2.1 / Ultralytics environment is not
+# broken; pyarrow is pinned to a wheel that supports NumPy 1.26.
+datasets==3.6.0
+pyarrow==17.0.0
+numpy>=1.26,<2
+pandas>=2.0,<4

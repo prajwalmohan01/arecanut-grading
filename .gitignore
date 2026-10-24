@@ -35,6 +35,8 @@ ml_service/weights/backups/
 ml_service/weights/candidates/
 ml_service/evaluation/*.tmp
 training_reports/*.tmp
+training_reports/xray_dataset.json
+training_reports/xray_manual_import.json
 runs/
 
 # Logs

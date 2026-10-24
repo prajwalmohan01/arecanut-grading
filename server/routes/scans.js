@@ -24,6 +24,7 @@ const {
   getModelStatus,
   getEvaluationReport,
   getModelMetadata,
+  getXrayDatasetReport,
 } = require('../services/modelService');
 const {
   serializeScan,
@@ -595,6 +596,7 @@ router.get(
       runtime: modelStatus.runtime,
       transport: modelStatus.transport,
       evaluation,
+      xrayDataset: getXrayDatasetReport(),
       capabilities: metadata.capabilities || {},
       notes: metadata.evaluation || {},
     });

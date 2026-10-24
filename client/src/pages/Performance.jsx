@@ -27,6 +27,17 @@ function formatBytes(bytes) {
   return `${value.toFixed(unit === 0 ? 0 : 2)} ${units[unit]}`;
 }
 
+function formatCounts(value) {
+  if (!value || typeof value !== 'object') return 'Not available';
+  const entries = Object.entries(value);
+  if (entries.length === 0) return 'Not available';
+  return entries.map(([label, count]) => `${label}: ${Number(count).toLocaleString()}`).join(' | ');
+}
+
+function coverageLabel(value) {
+  return value === true ? 'Present' : 'Not present';
+}
+
 function Row({ label, value, mono = false }) {
   return (
     <div className="flex items-start justify-between gap-4 border-b border-[color:var(--border)] py-2.5 last:border-0">
@@ -77,6 +88,7 @@ export default function Performance() {
   const model = data?.model || {};
   const evaluation = data?.evaluation || {};
   const capabilities = data?.capabilities || {};
+  const xray = data?.xrayDataset || {};
   const runtime = data?.runtime;
 
   const verified = useMemo(() => {
@@ -317,6 +329,108 @@ export default function Performance() {
           </div>
         </Card>
       </div>
+
+      <Card className="p-5 animate-in">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+          <div>
+            <h3 className="font-display text-lg font-semibold text-main">X-ray reference dataset</h3>
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted">
+              Optional X-ArecaNet data is kept separate from the active model and from ordinary
+              tray photographs. Its verified classes are XrayGrade1, XrayGrade2 and XrayGrade3.
+              It does not provide application Grade A/B/C/D labels.
+            </p>
+          </div>
+          <Badge tone={xray.prepared ? 'a' : 'neutral'}>
+            {xray.prepared ? 'Prepared separately' : xray.downloaded ? 'Downloaded only' : 'Not downloaded'}
+          </Badge>
+        </div>
+
+        {xray.available ? (
+          <>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--panel-soft)] p-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted">Source images</p>
+                <p className="mt-1 font-display text-xl font-semibold text-main">
+                  {Number(xray.summary?.raw_images || 0).toLocaleString()}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--panel-soft)] p-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted">Prepared images</p>
+                <p className="mt-1 font-display text-xl font-semibold text-main">
+                  {Number(xray.summary?.prepared_images || 0).toLocaleString()}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--panel-soft)] p-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted">Bounding boxes</p>
+                <p className="mt-1 font-display text-xl font-semibold text-main">
+                  {Number(xray.summary?.prepared_boxes || xray.summary?.raw_boxes || 0).toLocaleString()}
+                </p>
+              </div>
+              <div className="rounded-xl border border-[color:var(--border)] bg-[color:var(--panel-soft)] p-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-muted">Test split</p>
+                <p className="mt-1 font-display text-xl font-semibold text-main">
+                  {xray.summary?.test_available ? 'Available' : 'Not available'}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-5 lg:grid-cols-2">
+              <div>
+                <Row label="Source categories" value={(xray.classes || []).join(', ') || 'Not available'} mono />
+                <Row label="Source grade counts" value={formatCounts(xray.source_grade_counts)} />
+                <Row
+                  label="Train / validation / test"
+                  value={`${Number(xray.splits?.train || 0).toLocaleString()} / ${Number(xray.splits?.val || 0).toLocaleString()} / ${Number(xray.splits?.test || 0).toLocaleString()}`}
+                />
+                <Row label="Exact duplicate groups" value={String((xray.duplicate_groups || []).length)} />
+              </div>
+              <div>
+                <Row label="Grade A coverage" value={coverageLabel(xray.grade_coverage?.A)} />
+                <Row label="Grade B coverage" value={coverageLabel(xray.grade_coverage?.B)} />
+                <Row label="Grade C coverage" value={coverageLabel(xray.grade_coverage?.C)} />
+                <Row label="Grade D coverage" value={coverageLabel(xray.grade_coverage?.D)} />
+              </div>
+            </div>
+
+            <div className="mt-3 alert alert-warn items-start text-xs leading-relaxed">
+              <AlertIcon width={16} height={16} />
+              <div>
+                <p className="font-semibold">This dataset cannot be used as an A-D app model without new labels.</p>
+                <p className="mt-1">
+                  Source categories 0/1/2 are verified Grade1/Grade2/Grade3, not A/B/C/D.
+                  Keep X-ray training separate from the active tray-photo model.
+                </p>
+                {(xray.duplicate_groups || []).length > 0 && (
+                  <p className="mt-1">
+                    {xray.duplicate_groups.length} exact duplicate group(s) were detected; conflicting
+                    groups are excluded during preparation.
+                  </p>
+                )}
+                {(xray.prefix_mismatches || []).length > 0 && (
+                  <p className="mt-1">
+                    {xray.prefix_mismatches.length} source filename/category mismatch(es) are reported,
+                    not silently corrected.
+                  </p>
+                )}
+                <p className="mt-2 text-muted">
+                  Add more images by annotating them in YOLO format and running
+                  <code className="mx-1 rounded bg-black/10 px-1 py-0.5 text-[11px]">scripts\import_xray_annotations.py</code>.
+                </p>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="mt-3 alert alert-warn items-start text-xs leading-relaxed">
+            <AlertIcon width={16} height={16} />
+            <div>
+              <p className="font-semibold">No local X-ray dataset is installed</p>
+              <p className="mt-1">{xray.reason || 'Download and prepare it with explicit commands.'}</p>
+              <p className="mt-2 font-mono text-[11px]">python scripts\download_xray_dataset.py</p>
+              <p className="font-mono text-[11px]">python scripts\prepare_xray_dataset.py</p>
+            </div>
+          </div>
+        )}
+      </Card>
 
       <div className="grid gap-5 lg:grid-cols-2">
         <Card className="p-5 animate-in">

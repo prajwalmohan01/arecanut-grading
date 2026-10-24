@@ -78,6 +78,26 @@ function getEvaluationReport() {
   return { available: true, reason: null, metrics };
 }
 
+function getXrayDatasetReport() {
+  const report = readJson(config.xrayDatasetPath);
+  if (!report || typeof report !== 'object') {
+    return {
+      available: false,
+      downloaded: false,
+      prepared: false,
+      reason:
+        'No X-ray dataset report exists yet. Download it explicitly with scripts/download_xray_dataset.py, then prepare it.',
+    };
+  }
+  return {
+    ...report,
+    available: report.available !== false && report.status !== 'failed',
+    downloaded: report.downloaded === true,
+    prepared: report.prepared === true,
+    reason: report.error || null,
+  };
+}
+
 async function pingMlService() {
   if (config.mlTransport !== 'http') {
     return { reachable: null, detail: 'ML_TRANSPORT=local (in-process CLI transport)' };
@@ -127,6 +147,7 @@ module.exports = {
   getModelMetadata,
   getModelArtifactStatus,
   getEvaluationReport,
+  getXrayDatasetReport,
   getModelStatus,
   pingMlService,
 };
