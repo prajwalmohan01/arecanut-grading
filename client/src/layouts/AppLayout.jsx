@@ -176,7 +176,7 @@ function SidebarContent({ onNavigate }) {
 
       <p className="px-5 pb-5 text-[10px] leading-relaxed text-muted">
         AI estimates and manual grades are decision-support only — not certified commercial grades
-        or laboratory tests.
+        or laboratory tests - MR.
       </p>
     </div>
   );

@@ -63,7 +63,7 @@ function ProfileCreatorToast() {
     >
       <span aria-hidden="true" style={{ fontSize: '20px', lineHeight: 1 }}>✦</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: '12px', fontWeight: 600 }}>Crafted with care</div>
+        <div style={{ fontSize: '12px', fontWeight: 600 }}>Credit with care</div>
         <div style={{ fontSize: '11px', color: '#a1a1aa', marginTop: '3px' }}>
           By <span style={{ color: '#fff' }}>Prajwal Mohan</span>
         </div>

@@ -122,7 +122,7 @@ This is the normal workflow. The committed weights are used as-is.
 ### 1. Clone and enter the project
 
 ```powershell
-git clone https://github.com/Spandana-MJ/arecanut-grading.git
+git clone https://github.com/prajwalmohan01/arecanut-grading.git
 cd arecanut-grading
 ```
 
