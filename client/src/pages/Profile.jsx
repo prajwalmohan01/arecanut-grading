@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import API, { apiErrorMessage } from '../api/axios';
@@ -18,6 +20,100 @@ function Section({ title, description, children }) {
     </Card>
   );
 }
+
+
+
+
+
+function ProfileCreatorToast() {
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setVisible(false), 5000);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  if (!visible || typeof document === 'undefined') return null;
+
+  return createPortal(
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: 'fixed',
+        top: '16px',
+        left: 'calc(50vw - 140px)',
+        right: 'auto',
+        transform: 'none',
+        zIndex: 2147483647,
+        width: '280px',
+        maxWidth: 'calc(100vw - 32px)',
+        boxSizing: 'border-box',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        padding: '10px 12px',
+        background: '#09090b',
+        color: '#fff',
+        border: '1px solid #27272a',
+        borderRadius: '10px',
+        boxShadow: '0 8px 30px rgba(0,0,0,0.3)',
+        animation: 'profileCreatorToastIn 300ms ease-out both',
+      }}
+    >
+      <span aria-hidden="true" style={{ fontSize: '20px', lineHeight: 1 }}>✦</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '12px', fontWeight: 600 }}>Crafted with care</div>
+        <div style={{ fontSize: '11px', color: '#a1a1aa', marginTop: '3px' }}>
+          By <span style={{ color: '#fff' }}>Prajwal Mohan</span>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => setVisible(false)}
+        aria-label="Close notification"
+        style={{
+          border: 0,
+          background: 'transparent',
+          color: '#a1a1aa',
+          cursor: 'pointer',
+          fontSize: '20px',
+          lineHeight: 1,
+          padding: '2px 3px',
+        }}
+      >
+        ×
+      </button>
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          height: '2px',
+          width: '100%',
+          background: '#3b82f6',
+          transformOrigin: 'left',
+          animation: 'profileCreatorToastProgress 5s linear forwards',
+        }}
+      />
+      <style>{`
+        @keyframes profileCreatorToastIn {
+          from { opacity: 0; margin-top: -8px; }
+          to { opacity: 1; margin-top: 0; }
+        }
+        @keyframes profileCreatorToastProgress {
+          from { transform: scaleX(1); }
+          to { transform: scaleX(0); }
+        }
+      `}</style>
+    </div>,
+    document.body
+  );
+}
+
+
+
 
 export default function Profile() {
   const { user, updateUser, theme, setTheme } = useAuth();
@@ -127,6 +223,13 @@ export default function Profile() {
         </div>
       </div>
 
+
+
+      <ProfileCreatorToast />
+
+
+
+      
       <div className="grid gap-5 lg:grid-cols-2">
         <Section
           title="Profile details"

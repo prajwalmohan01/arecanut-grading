@@ -119,7 +119,7 @@ export default function Login() {
               label="Username"
               value={form.username}
               onChange={onChange}
-              placeholder="your_username"
+              placeholder="your username"
               autoComplete="username"
               autoFocus
               required
@@ -157,7 +157,7 @@ export default function Login() {
           </form>
 
           <p className="mt-6 text-center text-sm text-muted">
-            New to ARECANUT QUALITY GRADING SYSTEM?{' '}
+            New to Arecanut Quality Grading System ?{' '}
             <Link to="/signup" className="link">
               Create an account
             </Link>
