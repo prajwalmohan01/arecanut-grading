@@ -35,7 +35,7 @@ Prerequisites: Node.js 20+, Python 3.10–3.12, and MongoDB running locally (or 
 connection string).
 
 ```powershell
-git clone https://github.com/Spandana-MJ/arecanut-grading.git
+git clone https://github.com/prajwalmohan01/arecanut-grading.git
 cd arecanut-grading
 .\setup.ps1
 # Edit server\.env if you need a different MONGO_URI or JWT_SECRET.
@@ -122,7 +122,7 @@ This is the normal workflow. The committed weights are used as-is.
 ### 1. Clone and enter the project
 
 ```powershell
-git clone https://github.com/Spandana-MJ/arecanut-grading.git
+git clone https://github.com/prajwalmohan01/arecanut-grading.git
 cd arecanut-grading
 ```
 
