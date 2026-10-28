@@ -23,7 +23,7 @@ import {
 
 const NAV_GROUPS = [
   {
-    label: 'AI grading',
+    label: 'Grading',
     items: [
       { to: '/dashboard', label: 'Dashboard', icon: DashboardIcon },
       { to: '/upload', label: 'New prediction', icon: UploadIcon },
@@ -31,7 +31,7 @@ const NAV_GROUPS = [
     ],
   },
   {
-    label: 'AI analysis',
+    label: 'Analysis',
     items: [
       { to: '/compare', label: 'Compare predictions', icon: CompareIcon },
       { to: '/performance', label: 'Model performance', icon: PerformanceIcon },
@@ -176,7 +176,7 @@ function SidebarContent({ onNavigate }) {
 
       <p className="px-5 pb-5 text-[10px] leading-relaxed text-muted">
         AI estimates and manual grades are decision-support only — not certified commercial grades
-        or laboratory tests.
+        or laboratory tests - MR.
       </p>
     </div>
   );
