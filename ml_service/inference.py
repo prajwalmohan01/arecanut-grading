@@ -36,17 +36,53 @@ EVALUATION_PATH = os.path.join(BASE_DIR, "evaluation", "metrics.json")
 
 # Project-relative by default; override with ARECANUT_MODEL_PATH or MODEL_PATH.
 # No absolute machine-specific path is hardcoded.
+def _env_number(name: str, default, cast=float, minimum=None, maximum=None):
+    """Read a numeric environment override without crashing on a typo."""
+    raw = os.environ.get(name)
+    try:
+        value = cast(default if raw is None else raw)
+    except (TypeError, ValueError):
+        value = cast(default)
+    if minimum is not None:
+        value = max(cast(minimum), value)
+    if maximum is not None:
+        value = min(cast(maximum), value)
+    return value
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 MODEL_PATH = os.environ.get("ARECANUT_MODEL_PATH") or os.environ.get(
     "MODEL_PATH", DEFAULT_MODEL_PATH
 )
-MODEL_CONF = float(os.environ.get("MODEL_CONF", "0.05"))
-MODEL_IMGSZ = int(os.environ.get("MODEL_IMGSZ", "1280"))
-MODEL_IOU = float(os.environ.get("MODEL_IOU", "0.35"))
-MODEL_MAX_DET = int(os.environ.get("MODEL_MAX_DET", "2000"))
-MODEL_AUGMENT = os.environ.get("MODEL_AUGMENT", "true").lower() == "true"
-USE_TILED = os.environ.get("USE_TILED", "true").lower() == "true"
-TILE_SIZE = int(os.environ.get("TILE_SIZE", "640"))
-TILE_OVERLAP = float(os.environ.get("TILE_OVERLAP", "0.25"))
+MODEL_CONF = _env_number("MODEL_CONF", "0.05", float, 0.0, 1.0)
+MODEL_IMGSZ = _env_number("MODEL_IMGSZ", "1280", int, 64, 4096)
+MODEL_IOU = _env_number("MODEL_IOU", "0.35", float, 0.01, 0.99)
+MODEL_MAX_DET = _env_number("MODEL_MAX_DET", "2000", int, 1, 10000)
+MODEL_AUGMENT = _env_bool("MODEL_AUGMENT", True)
+USE_TILED = _env_bool("USE_TILED", True)
+TILE_SIZE = _env_number("TILE_SIZE", "640", int, 128, 4096)
+TILE_OVERLAP = _env_number("TILE_OVERLAP", "0.25", float, 0.0, 0.9)
+# Tiles are inferred at the detector's native resolution by default. Keeping the
+# full-image size (often 1280) would upscale every 640 px tile and double the
+# cost for no extra detail.
+TILE_IMGSZ = _env_number(
+    "TILE_IMGSZ", str(min(MODEL_IMGSZ, TILE_SIZE)), int, 64, 4096
+)
+TILE_MERGE_IOU = _env_number("TILE_MERGE_IOU", "0.45", float, 0.01, 0.99)
+TILE_DUPLICATE_CENTER_RATIO = _env_number(
+    "TILE_DUPLICATE_CENTER_RATIO", "0.30", float, 0.0, 1.0
+)
+TILE_CORE_OWNERSHIP = _env_bool("TILE_CORE_OWNERSHIP", False)
+TILE_MIN_IMAGE_FACTOR = _env_number("TILE_MIN_IMAGE_FACTOR", "1.5", float, 1.0, 10.0)
+TILE_INCLUDE_FULL_IMAGE = _env_bool("TILE_INCLUDE_FULL_IMAGE", False)
+MODEL_DEBUG = _env_bool("MODEL_DEBUG", False)
+DEBUG_CONF_FLOOR = _env_number("DEBUG_CONF_FLOOR", "0.01", float, 0.0, 1.0)
 
 _model = None
 _model_lock = threading.Lock()
@@ -173,6 +209,18 @@ def model_info() -> dict:
         "input": metadata.get("input", {}),
         "confidence_threshold": MODEL_CONF,
         "iou_threshold": MODEL_IOU,
+        "inference": {
+            "imgsz": MODEL_IMGSZ,
+            "augment": MODEL_AUGMENT,
+            "max_det": MODEL_MAX_DET,
+            "tiled": USE_TILED,
+            "tile_size": TILE_SIZE,
+            "tile_overlap": TILE_OVERLAP,
+            "tile_imgsz": TILE_IMGSZ,
+            "tile_merge_iou": TILE_MERGE_IOU,
+            "tile_core_ownership": TILE_CORE_OWNERSHIP,
+            "debug": MODEL_DEBUG,
+        },
     }
 
 
@@ -272,12 +320,19 @@ def _empty_defect_report(supported_labels=None) -> dict:
     }
 
 
-def _run_predict(model, image):
+def _effective_conf() -> float:
+    """Debug mode may lower the threshold to inspect near-miss detections."""
+    if MODEL_DEBUG and DEBUG_CONF_FLOOR < MODEL_CONF:
+        return DEBUG_CONF_FLOOR
+    return MODEL_CONF
+
+
+def _run_predict(model, image, imgsz=None):
     return model.predict(
         source=image,
-        conf=MODEL_CONF,
+        conf=_effective_conf(),
         iou=MODEL_IOU,
-        imgsz=MODEL_IMGSZ,
+        imgsz=MODEL_IMGSZ if imgsz is None else imgsz,
         max_det=MODEL_MAX_DET,
         agnostic_nms=False,
         augment=MODEL_AUGMENT,
@@ -286,30 +341,162 @@ def _run_predict(model, image):
     )
 
 
-def _nms_boxes(detections, iou_thresh=0.45):
+def _detections_from_result(result, names, offset_x=0.0, offset_y=0.0):
+    """Convert one Ultralytics result into the application's detection dicts."""
+    boxes = getattr(result, "boxes", None)
+    if boxes is None or len(boxes) == 0:
+        return []
+    xyxy = boxes.xyxy.cpu().numpy()
+    confidences = boxes.conf.cpu().numpy()
+    classes = boxes.cls.cpu().numpy()
+    detections = []
+    for box, confidence, class_id in zip(xyxy, confidences, classes):
+        class_id = int(class_id)
+        label = names.get(class_id, f"class_{class_id}")
+        x1, y1, x2, y2 = (float(value) for value in box)
+        detections.append(
+            {
+                "label": label,
+                "class_id": class_id,
+                "confidence": float(confidence),
+                "bbox": [
+                    x1 + offset_x,
+                    y1 + offset_y,
+                    x2 + offset_x,
+                    y2 + offset_y,
+                ],
+            }
+        )
+    return detections
+
+
+def _axis_origins(length: int, tile: int, step: int):
+    """Tile origins that always include a full tile at the far edge."""
+    if length <= tile:
+        return [0]
+    origins = list(range(0, length - tile + 1, step))
+    if origins[-1] != length - tile:
+        origins.append(length - tile)
+    return origins
+
+
+def tile_plan(width: int, height: int):
+    """Return ``(x1, y1, x2, y2, core_box)`` tuples covering the whole image.
+
+    The final row/column is aligned with the image edge instead of being a thin
+    strip, so nuts at the right/bottom border are never cut off or skipped.
+    """
+    tile_w = min(TILE_SIZE, width)
+    tile_h = min(TILE_SIZE, height)
+    step_x = max(1, int(round(tile_w * (1.0 - TILE_OVERLAP))))
+    step_y = max(1, int(round(tile_h * (1.0 - TILE_OVERLAP))))
+    overlap_x = max(0, tile_w - step_x)
+    overlap_y = max(0, tile_h - step_y)
+
+    xs = _axis_origins(width, tile_w, step_x)
+    ys = _axis_origins(height, tile_h, step_y)
+    plan = []
+    for y1 in ys:
+        y2 = min(y1 + tile_h, height)
+        for x1 in xs:
+            x2 = min(x1 + tile_w, width)
+            # Core ownership assigns each nut to exactly one tile, avoiding
+            # duplicate boxes in overlapping regions.
+            core_x1 = x1 + (overlap_x // 2 if x1 > 0 else 0)
+            core_x2 = x2 - (overlap_x // 2 if x2 < width else 0)
+            core_y1 = y1 + (overlap_y // 2 if y1 > 0 else 0)
+            core_y2 = y2 - (overlap_y // 2 if y2 < height else 0)
+            if core_x2 <= core_x1:
+                core_x1, core_x2 = x1, x2
+            if core_y2 <= core_y1:
+                core_y1, core_y2 = y1, y2
+            plan.append((x1, y1, x2, y2, (core_x1, core_y1, core_x2, core_y2)))
+    return plan, (tile_w, tile_h)
+
+
+def _box_iou(a, b) -> float:
+    x1 = max(a[0], b[0])
+    y1 = max(a[1], b[1])
+    x2 = min(a[2], b[2])
+    y2 = min(a[3], b[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _box_containment(a, b) -> float:
+    """Intersection over the smaller box (catches nested duplicate boxes)."""
+    x1 = max(a[0], b[0])
+    y1 = max(a[1], b[1])
+    x2 = min(a[2], b[2])
+    y2 = min(a[3], b[3])
+    inter = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    smaller = min(area_a, area_b)
+    return inter / smaller if smaller > 0 else 0.0
+
+
+def dedupe_detections(detections, iou_thresh=None, center_ratio=None):
+    """Remove duplicate boxes while keeping touching neighbouring nuts.
+
+    A pair is a duplicate when any of these is true:
+      * IoU is at or above ``iou_thresh``;
+      * one box is almost completely inside the other (containment >= 0.90);
+      * the centres are very close *and* the boxes overlap, which catches
+        shifted duplicates produced by overlapping tiles.
+
+    The highest-confidence detection in each duplicate cluster is kept.
+    """
     if not detections:
         return []
-    import numpy as np
-    boxes = np.array([d["bbox"] for d in detections])
-    scores = np.array([d["confidence"] for d in detections])
-    x1 = boxes[:, 0]; y1 = boxes[:, 1]; x2 = boxes[:, 2]; y2 = boxes[:, 3]
-    areas = (x2 - x1) * (y2 - y1)
-    order = scores.argsort()[::-1]
-    keep = []
-    while order.size > 0:
-        i = order[0]
-        keep.append(i)
-        xx1 = np.maximum(x1[i], x1[order[1:]])
-        yy1 = np.maximum(y1[i], y1[order[1:]])
-        xx2 = np.minimum(x2[i], x2[order[1:]])
-        yy2 = np.minimum(y2[i], y2[order[1:]])
-        w = np.maximum(0.0, xx2 - xx1)
-        h = np.maximum(0.0, yy2 - yy1)
-        inter = w * h
-        iou = inter / (areas[i] + areas[order[1:]] - inter + 1e-6)
-        inds = np.where(iou <= iou_thresh)[0]
-        order = order[inds + 1]
-    return [detections[i] for i in keep]
+    iou_thresh = TILE_MERGE_IOU if iou_thresh is None else iou_thresh
+    center_ratio = (
+        TILE_DUPLICATE_CENTER_RATIO if center_ratio is None else center_ratio
+    )
+    ordered = sorted(detections, key=lambda item: item["confidence"], reverse=True)
+    kept = []
+    for det in ordered:
+        box = det["bbox"]
+        width = max(0.0, box[2] - box[0])
+        height = max(0.0, box[3] - box[1])
+        center_x = (box[0] + box[2]) / 2.0
+        center_y = (box[1] + box[3]) / 2.0
+        duplicate = False
+        for other in kept:
+            other_box = other["bbox"]
+            iou = _box_iou(box, other_box)
+            if iou >= iou_thresh:
+                duplicate = True
+                break
+            if _box_containment(box, other_box) >= 0.90:
+                duplicate = True
+                break
+            other_w = max(0.0, other_box[2] - other_box[0])
+            other_h = max(0.0, other_box[3] - other_box[1])
+            other_cx = (other_box[0] + other_box[2]) / 2.0
+            other_cy = (other_box[1] + other_box[3]) / 2.0
+            min_dim = min(width, height, other_w, other_h)
+            distance = ((center_x - other_cx) ** 2 + (center_y - other_cy) ** 2) ** 0.5
+            if iou > 0.05 and min_dim > 0 and distance < center_ratio * min_dim:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(det)
+    return kept
+
+
+def _nms_boxes(detections, iou_thresh=0.45):
+    """Backwards-compatible wrapper around the duplicate-suppression helper."""
+    return dedupe_detections(detections, iou_thresh=iou_thresh)
+
+
+def _centre_inside(box, core_box) -> bool:
+    centre_x = (box[0] + box[2]) / 2.0
+    centre_y = (box[1] + box[3]) / 2.0
+    return core_box[0] <= centre_x < core_box[2] and core_box[1] <= centre_y < core_box[3]
 
 
 def analyse_image(image) -> dict:
@@ -326,67 +513,47 @@ def analyse_image(image) -> dict:
     unsupported_letters = [letter for letter in GRADE_ORDER if letter not in supported_letters]
     supported_labels = [names[i] for i in sorted(names)]
 
-    all_detections = []
-    used_tiled = False
+    raw_detections = []
+    mode = "full"
+    tile_count = 0
+    tile_w = tile_h = None
+    full_image_pass = False
+    inference_error = None
 
-    if USE_TILED and max(height, width) > TILE_SIZE * 1.5:
+    should_tile = USE_TILED and max(height, width) > TILE_SIZE * TILE_MIN_IMAGE_FACTOR
+    if should_tile:
+        plan, (tile_w, tile_h) = tile_plan(width, height)
+        tile_count = len(plan)
+        mode = "tiled"
         try:
-            import numpy as np
-            step = int(TILE_SIZE * (1 - TILE_OVERLAP))
-            if step < 1:
-                step = TILE_SIZE // 2
-            for y in range(0, height, step):
-                for x in range(0, width, step):
-                    y2 = min(y + TILE_SIZE, height)
-                    x2 = min(x + TILE_SIZE, width)
-                    if y2 - y < TILE_SIZE // 2 and y != 0:
-                        continue
-                    if x2 - x < TILE_SIZE // 2 and x != 0:
-                        continue
-                    tile = image[y:y2, x:x2]
-                    results = _run_predict(model, tile)
-                    res = results[0]
-                    boxes = res.boxes
-                    if boxes is not None and len(boxes):
-                        xyxy = boxes.xyxy.cpu().numpy()
-                        confidences = boxes.conf.cpu().numpy()
-                        classes = boxes.cls.cpu().numpy()
-                        for box, confidence, class_id in zip(xyxy, confidences, classes):
-                            class_id = int(class_id)
-                            label = names.get(class_id, f"class_{class_id}")
-                            x1, y1, x2b, y2b = (float(v) for v in box)
-                            all_detections.append({
-                                "label": label,
-                                "class_id": class_id,
-                                "confidence": float(confidence),
-                                "bbox": [x1 + x, y1 + y, x2b + x, y2b + y],
-                            })
-            used_tiled = True
-        except Exception:
-            all_detections = []
-            used_tiled = False
+            for x1, y1, x2, y2, core_box in plan:
+                tile = image[y1:y2, x1:x2]
+                if tile.size == 0:
+                    continue
+                results = _run_predict(model, tile, imgsz=TILE_IMGSZ)
+                tile_detections = _detections_from_result(
+                    results[0], names, offset_x=float(x1), offset_y=float(y1)
+                )
+                if TILE_CORE_OWNERSHIP:
+                    tile_detections = [
+                        det for det in tile_detections if _centre_inside(det["bbox"], core_box)
+                    ]
+                raw_detections.extend(tile_detections)
+        except Exception as exc:  # pragma: no cover - depends on runtime/model
+            raw_detections = []
+            inference_error = f"{type(exc).__name__}: {exc}"
+            mode = "full"
+            tile_count = 0
 
-    if not all_detections or not used_tiled:
+    if mode == "full" or TILE_INCLUDE_FULL_IMAGE:
+        # A full-image pass is optional for tiled runs (useful for very large
+        # nuts that span tiles) but never a silent second attempt when tiling
+        # simply found nothing.
         results = _run_predict(model, image)
-        result = results[0]
-        boxes = result.boxes
-        if boxes is not None and len(boxes):
-            xyxy = boxes.xyxy.cpu().numpy()
-            confidences = boxes.conf.cpu().numpy()
-            classes = boxes.cls.cpu().numpy()
-            for box, confidence, class_id in zip(xyxy, confidences, classes):
-                class_id = int(class_id)
-                label = names.get(class_id, f"class_{class_id}")
-                x1, y1, x2b, y2b = (float(v) for v in box)
-                all_detections.append({
-                    "label": label,
-                    "class_id": class_id,
-                    "confidence": float(confidence),
-                    "bbox": [x1, y1, x2b, y2b],
-                })
+        raw_detections.extend(_detections_from_result(results[0], names))
+        full_image_pass = mode == "tiled"
 
-    if all_detections:
-        all_detections = _nms_boxes(all_detections, iou_thresh=MODEL_IOU)
+    all_detections = dedupe_detections(raw_detections)
 
     grades = {"A": 0, "B": 0, "C": 0, "D": 0}
     class_counts: dict[str, int] = {}
@@ -552,11 +719,7 @@ def analyse_image(image) -> dict:
             cv2.rectangle(annotated, (x1, max(0, y1 - th - 6)), (x1 + tw + 4, y1), color, -1)
             cv2.putText(annotated, text, (x1 + 2, max(0, y1 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     except Exception:
-        try:
-            results = _run_predict(model, image)
-            annotated = results[0].plot()
-        except Exception:
-            annotated = image.copy()
+        annotated = image.copy()
     processed_preview = _letterbox_preview(image, MODEL_IMGSZ)
     processing_ms = round((time.perf_counter() - started) * 1000, 2)
 
@@ -567,6 +730,31 @@ def analyse_image(image) -> dict:
     grade_support = {
         letter: letter in supported_letters for letter in GRADE_ORDER
     }
+
+    inference_info = {
+        "mode": mode,
+        "imgsz": MODEL_IMGSZ if mode == "full" else TILE_IMGSZ,
+        "tile_size": TILE_SIZE if mode == "tiled" else None,
+        "tile_imgsz": TILE_IMGSZ if mode == "tiled" else None,
+        "tile_overlap": TILE_OVERLAP if mode == "tiled" else None,
+        "tile_count": tile_count,
+        "tile_shape": [tile_w, tile_h] if tile_w and mode == "tiled" else None,
+        "core_ownership": bool(mode == "tiled" and TILE_CORE_OWNERSHIP),
+        "full_image_pass": full_image_pass,
+        "augment": MODEL_AUGMENT,
+        "conf": _effective_conf(),
+        "iou": MODEL_IOU,
+        "raw_detections": len(raw_detections),
+        "deduped_detections": len(all_detections),
+        "dropped_duplicates": max(0, len(raw_detections) - len(all_detections)),
+        "error": inference_error,
+    }
+    if MODEL_DEBUG:
+        inference_info["debug_conf_floor"] = DEBUG_CONF_FLOOR
+        inference_info["debug_note"] = (
+            "MODEL_DEBUG lowered the confidence threshold; counts are not "
+            "production results."
+        )
 
     return {
         # Backwards-compatible fields used by the original UI/API
@@ -600,6 +788,7 @@ def analyse_image(image) -> dict:
             "detections": detections,
             "measurements": measurements,
             "defects": defects,
+            "inference": inference_info,
             "warnings": warnings,
         },
         "model": {

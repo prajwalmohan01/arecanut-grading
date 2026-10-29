@@ -3,6 +3,7 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 const axios = require('axios');
 const FormData = require('form-data');
 const { config } = require('../config');
@@ -105,6 +106,7 @@ function normaliseResult(raw) {
       categories: [],
       items: [],
     },
+    inference: report.inference || null,
     warnings: Array.isArray(report.warnings) ? report.warnings : [],
     model: raw.model || {},
     image: raw.image || {},
@@ -229,12 +231,316 @@ function callMlLocal(imagePath) {
   });
 }
 
+function workerEnv() {
+  return {
+    ...process.env,
+    MODEL_PATH: config.modelPath,
+    PYTHONIOENCODING: 'utf-8',
+    PYTHONUNBUFFERED: '1',
+  };
+}
+
+const workerState = {
+  child: null,
+  reader: null,
+  starting: null,
+  ready: false,
+  pending: new Map(),
+  nextId: 1,
+  lastError: null,
+  stderrTail: '',
+  stopping: false,
+};
+
+function workerUnavailable(message) {
+  const error = new InferenceError(message);
+  error.workerUnavailable = true;
+  return error;
+}
+
+function rejectPending(error) {
+  for (const [, pending] of workerState.pending) {
+    pending.reject(error);
+  }
+  workerState.pending.clear();
+}
+
+function resetWorker(child) {
+  // A timed-out worker can exit after a replacement has already started. Only
+  // clear state when the finishing child is still the current one.
+  if (child && workerState.child !== child) return false;
+  const { reader } = workerState;
+  workerState.ready = false;
+  workerState.child = null;
+  workerState.reader = null;
+  if (reader) {
+    try {
+      reader.close();
+    } catch {
+      /* already closed */
+    }
+  }
+  return true;
+}
+
+function startLocalWorker() {
+  if (workerState.ready && workerState.child) {
+    return Promise.resolve();
+  }
+  if (workerState.starting) {
+    return workerState.starting;
+  }
+  if (!config.useInferenceWorker) {
+    return Promise.reject(workerUnavailable('Persistent inference worker is disabled.'));
+  }
+  if (!fs.existsSync(config.inferenceWorkerPath)) {
+    return Promise.reject(
+      workerUnavailable(
+        `Inference worker script not found at ${config.inferenceWorkerPath}.`
+      )
+    );
+  }
+
+  workerState.starting = new Promise((resolve, reject) => {
+    let settled = false;
+    let child;
+    try {
+      child = spawn(
+        config.pythonPath,
+        ['-u', config.inferenceWorkerPath],
+        { windowsHide: true, env: workerEnv() }
+      );
+    } catch (error) {
+      reject(workerUnavailable(`Cannot start Python worker: ${error.message}`));
+      return;
+    }
+
+    workerState.child = child;
+    workerState.ready = false;
+    workerState.stopping = false;
+    workerState.stderrTail = '';
+
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      workerState.lastError = error.message;
+      clearTimeout(startTimer);
+      reject(error);
+    };
+
+    const startTimer = setTimeout(() => {
+      fail(
+        workerUnavailable(
+          `Inference worker did not become ready within ${Math.round(
+            config.workerStartupTimeoutMs / 1000
+          )}s.`
+        )
+      );
+      try {
+        child.kill();
+      } catch {
+        /* already gone */
+      }
+    }, config.workerStartupTimeoutMs);
+
+    workerState.reader = readline.createInterface({ input: child.stdout });
+
+    workerState.reader.on('line', (line) => {
+      const text = line.trim();
+      if (!text) return;
+      let message;
+      try {
+        message = JSON.parse(text);
+      } catch {
+        // Ultralytics or another dependency may print non-JSON diagnostics to
+        // stdout despite verbose=False. They are not protocol messages.
+        return;
+      }
+
+      if (message.type === 'ready') {
+        if (message.ok) {
+          workerState.ready = true;
+          workerState.lastError = null;
+          settled = true;
+          clearTimeout(startTimer);
+          resolve();
+        } else {
+          fail(
+            workerUnavailable(
+              `Inference worker failed to load the model: ${
+                message.error || 'unknown error'
+              }`
+            )
+          );
+        }
+        return;
+      }
+
+      const pending = workerState.pending.get(message.id);
+      if (!pending) return;
+      workerState.pending.delete(message.id);
+      if (message.ok) {
+        pending.resolve(message.result);
+      } else {
+        pending.reject(new InferenceError(String(message.error || 'Inference failed.')));
+      }
+    });
+
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString('utf8');
+      workerState.stderrTail = (workerState.stderrTail + text).slice(-4000);
+    });
+
+    child.on('error', (error) => {
+      fail(workerUnavailable(`Cannot start Python worker: ${error.message}`));
+    });
+
+    child.on('close', (code) => {
+      if (workerState.child !== child) return; // stale child; a replacement owns state
+      const wasReady = workerState.ready;
+      resetWorker(child);
+      const detail = workerState.stderrTail.trim().split(/\r?\n/).pop();
+      const reason = workerState.stopping
+        ? 'Inference worker stopped.'
+        : `Inference worker exited (code ${code}).${detail ? ` ${detail}` : ''}`;
+      if (!wasReady) {
+        fail(workerUnavailable(reason));
+      }
+      rejectPending(workerUnavailable(reason));
+    });
+  }).finally(() => {
+    workerState.starting = null;
+  });
+
+  return workerState.starting;
+}
+
+function requestFromWorker(imagePath) {
+  return new Promise((resolve, reject) => {
+    const child = workerState.child;
+    if (!child || !workerState.ready) {
+      reject(workerUnavailable('Inference worker is not running.'));
+      return;
+    }
+
+    const id = String(workerState.nextId++);
+    const timer = setTimeout(() => {
+      workerState.pending.delete(id);
+      workerState.ready = false;
+      try {
+        child.kill();
+      } catch {
+        /* already gone */
+      }
+      reject(
+        workerUnavailable(
+          `Inference worker timed out after ${Math.round(
+            config.mlTimeoutMs / 1000
+          )}s and was restarted.`
+        )
+      );
+    }, config.mlTimeoutMs);
+
+    workerState.pending.set(id, {
+      resolve: (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      },
+      reject: (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    });
+
+    const payload = `${JSON.stringify({ id, action: 'predict', image: imagePath })}\n`;
+    child.stdin.write(payload, 'utf8', (error) => {
+      if (!error) return;
+      workerState.pending.delete(id);
+      clearTimeout(timer);
+      reject(workerUnavailable(`Cannot send image to the inference worker: ${error.message}`));
+    });
+  });
+}
+
+// The worker handles one request at a time; serialise at the caller so two
+// uploads never interleave their JSON lines.
+let workerQueue = Promise.resolve();
+
+function callMlWorker(imagePath) {
+  const job = workerQueue.then(async () => {
+    await startLocalWorker();
+    return requestFromWorker(imagePath);
+  });
+  workerQueue = job.catch(() => {});
+  return job;
+}
+
+async function warmupLocalInference() {
+  if (config.mlTransport !== 'local' || !config.useInferenceWorker) {
+    return { started: false, reason: 'worker disabled' };
+  }
+  const startedAt = Date.now();
+  await startLocalWorker();
+  return { started: true, startupMs: Date.now() - startedAt };
+}
+
+async function shutdownLocalInference() {
+  const { child } = workerState;
+  if (!child) return;
+  workerState.stopping = true;
+  try {
+    child.stdin.write(`${JSON.stringify({ action: 'shutdown' })}\n`, 'utf8');
+  } catch {
+    /* fall through to kill */
+  }
+  await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        /* already gone */
+      }
+      resolve();
+    }, 3000);
+    child.once('close', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+let workerFallbackWarned = false;
+
 async function runInference(imagePath) {
-  const raw =
-    config.mlTransport === 'http'
-      ? await callMlHttp(imagePath)
-      : await callMlLocal(imagePath);
+  let raw;
+  if (config.mlTransport === 'http') {
+    raw = await callMlHttp(imagePath);
+  } else if (config.useInferenceWorker) {
+    try {
+      raw = await callMlWorker(imagePath);
+    } catch (error) {
+      if (!error.workerUnavailable) throw error;
+      if (!workerFallbackWarned) {
+        workerFallbackWarned = true;
+        console.warn(
+          `[model] Persistent worker unavailable, falling back to per-request CLI: ${error.message}`
+        );
+      }
+      raw = await callMlLocal(imagePath);
+    }
+  } else {
+    raw = await callMlLocal(imagePath);
+  }
   return normaliseResult(raw);
 }
 
-module.exports = { runInference, normaliseResult, InferenceError };
+module.exports = {
+  runInference,
+  normaliseResult,
+  InferenceError,
+  warmupLocalInference,
+  shutdownLocalInference,
+  startLocalWorker,
+  callMlWorker,
+  workerState,
+};
