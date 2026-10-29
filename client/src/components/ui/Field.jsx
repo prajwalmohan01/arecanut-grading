@@ -29,7 +29,15 @@ export function TextField({
   );
 }
 
-export function SelectField({ label, id, className = '', children, ...props }) {
+export function SelectField({
+  label,
+  id,
+  hint,
+  error,
+  className = '',
+  children,
+  ...props
+}) {
   return (
     <div className={className}>
       {label && (
@@ -37,9 +45,19 @@ export function SelectField({ label, id, className = '', children, ...props }) {
           {label}
         </label>
       )}
-      <select id={id} className="select" {...props}>
+      <select
+        id={id}
+        className={`select ${error ? '!border-[color:var(--danger)]' : ''}`}
+        aria-invalid={Boolean(error)}
+        {...props}
+      >
         {children}
       </select>
+      {error ? (
+        <p className="mt-1.5 text-xs text-danger">{error}</p>
+      ) : hint ? (
+        <p className="mt-1.5 text-xs text-muted">{hint}</p>
+      ) : null}
     </div>
   );
 }

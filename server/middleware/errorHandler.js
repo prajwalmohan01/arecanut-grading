@@ -46,8 +46,10 @@ function errorHandler(error, req, res, next) {
 
   if (res.headersSent) return next(error);
 
+  const exposeMessage =
+    status < 500 || error.expose === true || !config.isProduction;
   return res.status(status).json({
-    error: status >= 500 && config.isProduction ? 'Internal server error' : message,
+    error: exposeMessage ? message : 'Internal server error',
   });
 }
 

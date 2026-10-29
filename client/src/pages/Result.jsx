@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import API, { apiErrorMessage, downloadApiFile } from '../api/axios';
+import { usePolicy } from '../context/PolicyContext';
 import { useToast } from '../context/ToastContext';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
@@ -8,6 +9,7 @@ import Spinner from '../components/ui/Spinner';
 import EmptyState from '../components/ui/EmptyState';
 import ConfirmDialog from '../components/ConfirmDialog';
 import ProtectedImage from '../components/ProtectedImage';
+import PolicyNotice from '../components/PolicyNotice';
 import { GradeBadge } from '../components/ui/Badge';
 import {
   AlertIcon,
@@ -22,11 +24,17 @@ import {
 } from '../components/Icons';
 import {
   downloadName,
+  enabledGradeLetters,
+  formatCurrency,
   formatDateTime,
+  formatNumber,
   formatPercent,
+  formatWeightKg,
+  gradeAvailability,
   gradeBreakdown,
   gradeColor,
   gradeDescription,
+  pricingStatusText,
   supportedGradeLetters,
 } from '../utils/format';
 
@@ -70,6 +78,7 @@ export default function Result() {
   const toast = useToast();
   const stateScan = location.state?.scan || null;
   const scanId = id || location.state?.scanId || stateScan?.id || null;
+  const { policy: contextPolicy } = usePolicy();
 
   const [scan, setScan] = useState(stateScan);
   const [loading, setLoading] = useState(Boolean(scanId));
@@ -78,6 +87,20 @@ export default function Result() {
   const [downloading, setDownloading] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [weightInput, setWeightInput] = useState('');
+  const [appliedWeightKg, setAppliedWeightKg] = useState('');
+  const [applyingWeight, setApplyingWeight] = useState(false);
+
+  function loadScan(weightKg) {
+    if (!scanId) return Promise.resolve();
+    setLoading(true);
+    setError('');
+    const params = weightKg ? { weightKg } : undefined;
+    return API.get(`/scans/${scanId}`, { params })
+      .then((response) => setScan(response.data.scan))
+      .catch((err) => setError(apiErrorMessage(err, 'Unable to load this prediction.')))
+      .finally(() => setLoading(false));
+  }
 
   useEffect(() => {
     if (!scanId) {
@@ -102,17 +125,35 @@ export default function Result() {
     };
   }, [scanId]);
 
-  const total = scan?.totalCount || 0;
-  const breakdown = useMemo(() => gradeBreakdown(scan), [scan]);
-  const supportedLetters = useMemo(() => supportedGradeLetters(scan), [scan]);
-  const unsupportedLetters = useMemo(
-    () => ['A', 'B', 'C', 'D'].filter((letter) => !supportedLetters.includes(letter)),
-    [supportedLetters]
+  const policy = scan?.predictionPolicy || contextPolicy;
+  const gradingOn = policy?.masterEnabled !== false && scan?.gradingEnabled !== false;
+  const enabledLetters = useMemo(
+    () => (gradingOn ? enabledGradeLetters(policy, scan) : []),
+    [gradingOn, policy, scan]
   );
+  const supportedLetters = useMemo(
+    () => (gradingOn ? supportedGradeLetters(scan) : []),
+    [gradingOn, scan]
+  );
+  const evaluatedLetters = useMemo(
+    () => enabledLetters.filter((letter) => supportedLetters.includes(letter)),
+    [enabledLetters, supportedLetters]
+  );
+  const unsupportedLetters = useMemo(
+    () => enabledLetters.filter((letter) => !supportedLetters.includes(letter)),
+    [enabledLetters, supportedLetters]
+  );
+  const breakdown = useMemo(() => gradeBreakdown(scan, enabledLetters), [scan, enabledLetters]);
+  const total = gradingOn ? Number(scan?.totalCount) || 0 : 0;
+  const countAvailable = evaluatedLetters.length > 0;
+  const pricing = scan?.pricing;
 
   const availableTabs = useMemo(
-    () => IMAGE_TABS.filter((item) => scan?.images?.[item.key]),
-    [scan]
+    () =>
+      IMAGE_TABS.filter(
+        (item) => scan?.images?.[item.key] && (gradingOn || item.key === 'original')
+      ),
+    [scan, gradingOn]
   );
 
   useEffect(() => {
@@ -125,12 +166,34 @@ export default function Result() {
     if (!scan) return;
     setDownloading(true);
     try {
-      await downloadApiFile(`/scans/${scan.id}/report.pdf`, downloadName(scan.reportId, 'report'));
+      const query = appliedWeightKg ? `?weightKg=${encodeURIComponent(appliedWeightKg)}` : '';
+      await downloadApiFile(
+        `/scans/${scan.id}/report.pdf${query}`,
+        downloadName(scan.reportId, 'report')
+      );
       toast.success('PDF report downloaded.');
     } catch (err) {
       toast.error(apiErrorMessage(err, 'Could not generate the PDF report.'));
     } finally {
       setDownloading(false);
+    }
+  }
+
+  async function applyWeight(event) {
+    event?.preventDefault();
+    const weight = Number(weightInput);
+    if (!Number.isFinite(weight) || weight <= 0) {
+      toast.error('Enter the measured net weight in kilograms.');
+      return;
+    }
+    setApplyingWeight(true);
+    try {
+      const normalized = String(weight);
+      setAppliedWeightKg(normalized);
+      await loadScan(normalized);
+      toast.success('Weight-based price estimate updated.');
+    } finally {
+      setApplyingWeight(false);
     }
   }
 
@@ -246,7 +309,11 @@ export default function Result() {
               {scan.imageWidth && scan.imageHeight
                 ? `${scan.imageWidth} × ${scan.imageHeight} px · `
                 : ''}
-              {gradeDescription(scan.finalGrade)}
+              {!gradingOn
+                ? 'AI grading outputs are disabled by the active administrator policy.'
+                : scan.finalGradeSource === 'gemini_advisory'
+                ? 'Gemini visual advisory — image-level review only; no per-nut count or confidence.'
+                : gradeDescription(scan.finalGrade)}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -264,12 +331,14 @@ export default function Result() {
         </div>
       </Card>
 
+      <PolicyNotice policy={policy} showPricing />
+
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_21rem]">
         <div className="space-y-5">
           <Card className="overflow-hidden animate-in">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[color:var(--border)] px-4 py-3">
               <div className="flex flex-wrap gap-1.5">
-                {IMAGE_TABS.map((item) => {
+                {availableTabs.map((item) => {
                   const available = Boolean(scan.images?.[item.key]);
                   return (
                     <button
@@ -291,7 +360,9 @@ export default function Result() {
                 })}
               </div>
               <p className="text-[11px] text-muted">
-                {tab === 'annotated'
+                {!gradingOn
+                  ? 'AI grading overlays are suppressed by the active policy'
+                  : tab === 'annotated'
                   ? 'Bounding boxes with Nut IDs and grades from model detections'
                   : tab === 'processed'
                   ? 'Actual model-input preprocessing preview (letterboxed)'
@@ -306,7 +377,7 @@ export default function Result() {
                 <ProtectedImage
                   url={scan.images[tab]}
                   label={IMAGE_TABS.find((item) => item.key === tab)?.label || 'Image'}
-                  alt={`${scan.finalGrade} prediction for ${scan.filename}`}
+                  alt={gradingOn ? `${scan.finalGrade || 'Automated'} prediction for ${scan.filename}` : scan.filename}
                   className="max-h-[30rem] w-full rounded-2xl object-contain"
                 />
               ) : (
@@ -317,115 +388,285 @@ export default function Result() {
             </div>
           </Card>
 
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div
-              className="rounded-3xl border p-5"
-              style={{ background: tone.bg, borderColor: tone.border }}
-            >
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: tone.color }}>
-                Majority grade
-              </p>
-              <p className="mt-2 font-display text-3xl font-bold" style={{ color: tone.color }}>
-                {scan.finalGrade}
-              </p>
-              <p className="mt-1 text-xs" style={{ color: tone.color }}>
-                {total} nut{total === 1 ? '' : 's'} detected
-              </p>
+          {gradingOn && (
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div
+                className="rounded-3xl border p-5"
+                style={{ background: tone.bg, borderColor: tone.border }}
+              >
+                <p className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: tone.color }}>
+                  Majority grade
+                </p>
+                <p className="mt-2 font-display text-3xl font-bold" style={{ color: tone.color }}>
+                  {scan.finalGrade || 'Unavailable'}
+                </p>
+                <p className="mt-1 text-xs" style={{ color: tone.color }}>
+                  {countAvailable
+                    ? `${formatNumber(total)} enabled nut${total === 1 ? '' : 's'} detected`
+                    : 'No per-nut count is available for the enabled grades.'}
+                </p>
+                {scan.finalGradeSource === 'gemini_advisory' && (
+                  <p className="mt-1 text-[10px] font-semibold" style={{ color: tone.color }}>
+                    Gemini advisory only — not a validated detector.
+                  </p>
+                )}
+              </div>
+              {breakdown.map((item) => {
+                const availability = gradeAvailability(scan, item.letter);
+                const supported = availability.supported;
+                const count = supported ? Number(availability.count ?? item.count) : null;
+                const pct =
+                  supported && total ? Math.round((count / total) * 1000) / 10 : null;
+                return (
+                  <div className={`card p-5 ${supported ? '' : 'opacity-80'}`} key={item.grade}>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">
+                      {item.grade} composition
+                    </p>
+                    <p
+                      className="stat-value mt-2"
+                      style={{ color: supported ? gradeColor(item.grade) : 'var(--text-muted)' }}
+                    >
+                      {supported ? `${pct}%` : '—'}
+                    </p>
+                    <p className="mt-1 text-xs text-muted">
+                      {supported
+                        ? `${formatNumber(count)} of ${formatNumber(total)} detections`
+                        : 'Enabled, but no validated detector count is available'}
+                    </p>
+                  </div>
+                );
+              })}
             </div>
-            {breakdown.map((item) => {
-              const supported = supportedLetters.includes(item.letter);
-              const pct = total ? Math.round((item.count / total) * 1000) / 10 : 0;
-              return (
-                <div className={`card p-5 ${supported ? '' : 'opacity-80'}`} key={item.grade}>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">
-                    {item.grade} composition
-                  </p>
-                  <p
-                    className="stat-value mt-2"
-                    style={{ color: supported ? gradeColor(item.grade) : 'var(--text-muted)' }}
-                  >
-                    {supported ? `${pct}%` : '—'}
-                  </p>
-                  <p className="mt-1 text-xs text-muted">
-                    {supported ? `${item.count} of ${total} detections` : 'Not evaluated by this model'}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
+          )}
 
-          {unsupportedLetters.length > 0 && (
+          {gradingOn && unsupportedLetters.length > 0 && (
             <Card className="p-5 animate-in">
               <h3 className="font-display text-base font-semibold text-main">
-                Grade {unsupportedLetters.join(' / Grade ')} not supported by this model
+                Grade {unsupportedLetters.join(' / Grade ')} is enabled but not counted
               </h3>
               <p className="mt-2 text-xs leading-relaxed text-muted">
-                All four grade cards are shown for completeness. This prediction was
-                produced by a checkpoint that exposes{' '}
-                {supportedLetters.map((letter) => `Grade ${letter}`).join(', ')} classes, so
-                Grade {unsupportedLetters.join(' / ')} are marked as not evaluated. No C/D
-                detections are inferred from A/B results. They become live automatically if a
-                checkpoint containing GradeC/GradeD classes is installed.
+                The bundled checkpoint exposes{' '}
+                {supportedLetters.length
+                  ? supportedLetters.map((letter) => `Grade ${letter}`).join(', ')
+                  : 'no grade'}{' '}
+                classes. Grade {unsupportedLetters.join(' / ')} is shown only when Gemini
+                provides a validated visual advisory. Gemini is never used as an object detector,
+                so no C/D detections or counts are inferred from A/B results. Install a validated
+                four-class detector to obtain C/D counts.
               </p>
             </Card>
           )}
 
-          <Card className="overflow-hidden animate-in">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--border)] px-5 py-4">
-              <div>
-                <h3 className="font-display text-lg font-semibold text-main">Detections</h3>
-                <p className="text-xs text-muted">Every box above the model confidence threshold</p>
+          {gradingOn && scan.geminiAdvisory && (
+            <Card className="p-5 animate-in">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-display text-base font-semibold text-main">
+                    Gemini visual advisory
+                  </h3>
+                  <p className="mt-1 text-xs text-muted">
+                    Image-level review only. This is not an object detector and does not create
+                    counts, boxes, or confidence values.
+                  </p>
+                </div>
+                <span className={`badge ${scan.geminiAdvisory.status === 'ok' ? 'badge-a' : 'badge-neutral'}`}>
+                  {scan.geminiAdvisory.status || 'advisory'}
+                </span>
               </div>
-              <span className="pill">{detections.length} boxes</span>
-            </div>
-            {detections.length === 0 ? (
-              <p className="px-5 py-10 text-center text-sm text-muted">
-                No arecanut regions were detected in this image. See the warnings below.
-              </p>
-            ) : (
-              <div className="table-shell">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Class</th>
-                      <th>Confidence</th>
-                      <th>Box (x1, y1, x2, y2)</th>
-                      <th>Size (px)</th>
-                      <th>Aspect</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detections.map((detection, index) => (
-                      <tr key={`${detection.label}-${index}`}>
-                        <td className="text-xs text-muted">{String(index + 1).padStart(2, '0')}</td>
-                        <td>
-                          <span className={`badge badge-${['A', 'B', 'C', 'D'].includes(detection.grade) ? detection.grade.toLowerCase() : 'neutral'}`}>
-                            {detection.label}
-                          </span>
-                        </td>
-                        <td className="text-sm text-main">
-                          {formatPercent(detection.confidence_pct ?? (detection.confidence || 0) * 100, 2)}
-                        </td>
-                        <td className="whitespace-nowrap font-mono text-[11px] text-muted">
-                          {(detection.bbox || []).map((value) => Number(value).toFixed(0)).join(', ')}
-                        </td>
-                        <td className="whitespace-nowrap text-xs text-muted">
-                          {Number(detection.box_width_px || 0).toFixed(0)} ×{' '}
-                          {Number(detection.box_height_px || 0).toFixed(0)}
-                        </td>
-                        <td className="text-xs text-main">
-                          {detection.aspect_ratio ? Number(detection.aspect_ratio).toFixed(2) : '—'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="mt-3 space-y-2 text-xs leading-relaxed text-muted">
+                <p>
+                  <span className="font-semibold text-main">Grade hint:</span>{' '}
+                  {scan.geminiAdvisory.gradeHint || 'No grade hint returned.'}
+                </p>
+                {scan.geminiAdvisory.note && <p>{scan.geminiAdvisory.note}</p>}
+                {Array.isArray(scan.geminiAdvisory.evidence) && scan.geminiAdvisory.evidence.length > 0 && (
+                  <div>
+                    <p className="font-semibold text-main">Visual evidence</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-4">
+                      {scan.geminiAdvisory.evidence.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {Array.isArray(scan.geminiAdvisory.limitations) && scan.geminiAdvisory.limitations.length > 0 && (
+                  <div>
+                    <p className="font-semibold text-main">Limitations</p>
+                    <ul className="mt-1 list-disc space-y-1 pl-4">
+                      {scan.geminiAdvisory.limitations.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
-            )}
-          </Card>
+            </Card>
+          )}
 
-          {warnings.length > 0 && (
+          {gradingOn && pricing?.active && (
+            <Card className="p-5 animate-in">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="font-display text-base font-semibold text-main">
+                    Price estimate
+                  </h3>
+                  <p className="mt-1 text-xs text-muted">{pricingStatusText(pricing)}</p>
+                </div>
+                <span className="pill">{pricing.mode === 'live' ? 'Live AGMARKNET' : 'Manual pricing'}</span>
+              </div>
+
+              {Array.isArray(pricing.lineItems) && pricing.lineItems.length > 0 && (
+                <div className="mt-3 overflow-x-auto">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Grade</th>
+                        <th>Count</th>
+                        <th>Price</th>
+                        <th>Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pricing.lineItems.map((line) => (
+                        <tr key={line.grade}>
+                          <td className="font-semibold text-main">{line.label}</td>
+                          <td>{formatNumber(line.count)}</td>
+                          <td>
+                            {line.price === null
+                              ? '—'
+                              : `${formatCurrency(line.price, pricing.currency)} ${
+                                  line.unit === 'per_nut'
+                                    ? 'per nut'
+                                    : line.unit === 'per_quintal'
+                                    ? 'per quintal'
+                                    : 'per kg'
+                                }`}
+                          </td>
+                          <td>{line.subtotal === null ? '—' : formatCurrency(line.subtotal, pricing.currency)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {pricing.requiresWeight && (
+                <form onSubmit={applyWeight} className="mt-3 flex flex-col gap-2 rounded-2xl bg-[color:var(--panel-soft)] p-3 sm:flex-row sm:items-end">
+                  <div className="flex-1">
+                    <label className="field-label" htmlFor="result-weight">Measured net weight (kg)</label>
+                    <input
+                      id="result-weight"
+                      className="input"
+                      type="number"
+                      min="0.001"
+                      step="0.001"
+                      value={weightInput}
+                      onChange={(event) => setWeightInput(event.target.value)}
+                      placeholder="e.g. 12.5"
+                    />
+                  </div>
+                  <Button type="submit" disabled={applyingWeight}>
+                    {applyingWeight ? <Spinner size={14} /> : null}
+                    {applyingWeight ? 'Applying…' : 'Apply weight'}
+                  </Button>
+                </form>
+              )}
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                <div className="rounded-2xl bg-[color:var(--panel-soft)] p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-muted">Measured / estimated weight</p>
+                  <p className="mt-1 font-semibold text-main">{formatWeightKg(pricing.totalWeightKg)}</p>
+                </div>
+                <div className="rounded-2xl bg-[color:var(--panel-soft)] p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-muted">Count-weighted price</p>
+                  <p className="mt-1 font-semibold text-main">
+                    {pricing.weightedPricePerKg === null
+                      ? '—'
+                      : `${formatCurrency(pricing.weightedPricePerKg, pricing.currency)} / kg`}
+                  </p>
+                </div>
+                <div className="rounded-2xl bg-[color:var(--panel-soft)] p-3">
+                  <p className="text-[10px] uppercase tracking-wide text-muted">Estimated total</p>
+                  <p className="mt-1 font-display text-lg font-bold text-main">
+                    {pricing.totalValue === null
+                      ? 'Not claimed'
+                      : formatCurrency(pricing.totalValue, pricing.currency)}
+                  </p>
+                </div>
+              </div>
+
+              {pricing.livePrice && (
+                <p className="mt-3 text-[11px] leading-relaxed text-muted">
+                  {pricing.livePrice.market || 'AGMARKNET'}{' '}
+                  {pricing.livePrice.variety ? `· ${pricing.livePrice.variety}` : ''} ·{' '}
+                  {pricing.livePrice.arrivalDate || 'date unavailable'} ·{' '}
+                  {formatCurrency(pricing.livePrice.pricePerQuintal, pricing.currency)} / quintal.
+                </p>
+              )}
+              <p className="mt-2 text-[11px] leading-relaxed text-muted">
+                {pricing.note || pricing.formula}
+              </p>
+            </Card>
+          )}
+
+          {gradingOn && (
+            <Card className="overflow-hidden animate-in">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[color:var(--border)] px-5 py-4">
+                <div>
+                  <h3 className="font-display text-lg font-semibold text-main">Detections</h3>
+                  <p className="text-xs text-muted">Every box above the model confidence threshold</p>
+                </div>
+                <span className="pill">{detections.length} boxes</span>
+              </div>
+              {detections.length === 0 ? (
+                <p className="px-5 py-10 text-center text-sm text-muted">
+                  No arecanut regions were detected in this image. See the warnings below.
+                </p>
+              ) : (
+                <div className="table-shell">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Class</th>
+                        <th>Confidence</th>
+                        <th>Box (x1, y1, x2, y2)</th>
+                        <th>Size (px)</th>
+                        <th>Aspect</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detections.map((detection, index) => (
+                        <tr key={`${detection.label}-${index}`}>
+                          <td className="text-xs text-muted">{String(index + 1).padStart(2, '0')}</td>
+                          <td>
+                            <span className={`badge badge-${['A', 'B', 'C', 'D'].includes(detection.grade) ? detection.grade.toLowerCase() : 'neutral'}`}>
+                              {detection.label}
+                            </span>
+                          </td>
+                          <td className="text-sm text-main">
+                            {formatPercent(detection.confidence_pct ?? (detection.confidence || 0) * 100, 2)}
+                          </td>
+                          <td className="whitespace-nowrap font-mono text-[11px] text-muted">
+                            {(detection.bbox || []).map((value) => Number(value).toFixed(0)).join(', ')}
+                          </td>
+                          <td className="whitespace-nowrap text-xs text-muted">
+                            {Number(detection.box_width_px || 0).toFixed(0)} ×{' '}
+                            {Number(detection.box_height_px || 0).toFixed(0)}
+                          </td>
+                          <td className="text-xs text-main">
+                            {detection.aspect_ratio ? Number(detection.aspect_ratio).toFixed(2) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          )}
+
+          {gradingOn && warnings.length > 0 && (
             <Card className="p-5 animate-in">
               <h3 className="font-display text-lg font-semibold text-main">Warnings &amp; limitations</h3>
               <ul className="mt-3 space-y-2">
@@ -441,87 +682,106 @@ export default function Result() {
         </div>
 
         <div className="space-y-4">
-          <Card className="p-5 animate-in">
-            <h3 className="font-display text-base font-semibold text-main">Result summary</h3>
-            <div className="mt-3">
-              <DetailRow label="Final grade" value={<GradeBadge grade={scan.finalGrade} />} />
-              <DetailRow label="Total detected" value={total} />
-              {breakdown.map((item) => (
+          {gradingOn && (
+            <Card className="p-5 animate-in">
+              <h3 className="font-display text-base font-semibold text-main">Result summary</h3>
+              <div className="mt-3">
+                <DetailRow label="Final grade" value={<GradeBadge grade={scan.finalGrade} />} />
                 <DetailRow
-                  key={item.grade}
-                  label={item.grade}
+                  label="Total detected"
+                  value={countAvailable ? formatNumber(total) : 'No enabled per-nut count'}
+                />
+                {breakdown.map((item) => {
+                  const availability = gradeAvailability(scan, item.letter);
+                  return (
+                    <DetailRow
+                      key={item.grade}
+                      label={item.grade}
+                      value={
+                        availability.supported
+                          ? formatNumber(availability.count ?? item.count)
+                          : 'Enabled; no validated detector count'
+                      }
+                    />
+                  );
+                })}
+                <DetailRow
+                  label="Evaluated grades"
                   value={
-                    supportedLetters.includes(item.letter)
-                      ? item.count
-                      : 'Not supported by this model'
+                    supportedLetters.length
+                      ? supportedLetters.map((letter) => `Grade ${letter}`).join(', ')
+                      : 'No validated grade detector'
                   }
                 />
-              ))}
-              <DetailRow
-                label="Evaluated grades"
-                value={supportedLetters.map((letter) => `Grade ${letter}`).join(', ')}
-              />
-              <DetailRow
-                label="Confidence"
-                value={formatPercent(scan.confidence, 2)}
-              />
-              <DetailRow
-                label="Quality score"
-                value={scan.qualityScore === null ? '—' : `${Number(scan.qualityScore).toFixed(2)} / 100`}
-              />
-            </div>
-            <p className="mt-3 text-[11px] leading-relaxed text-muted">
-              {scan.confidenceMethod ||
-                'Confidence is the mean winning-class detection confidence, not a calibrated probability.'}
-            </p>
-          </Card>
-
-          <Card className="p-5 animate-in">
-            <h3 className="font-display text-base font-semibold text-main">Image measurements</h3>
-            {measurements?.available ? (
-              <div className="mt-3">
-                <DetailRow label="Method" value="Bounding-box, image space" />
-                <DetailRow label="Units" value="pixels (uncalibrated)" />
-                <DetailRow label="Samples" value={measurements.sample_count} />
                 <DetailRow
-                  label="Avg major axis"
-                  value={`${Number(measurements.avg_major_axis_px).toFixed(1)} px`}
+                  label="Confidence"
+                  value={scan.confidence === null ? '—' : formatPercent(scan.confidence, 2)}
                 />
                 <DetailRow
-                  label="Avg minor axis"
-                  value={`${Number(measurements.avg_minor_axis_px).toFixed(1)} px`}
+                  label="Quality score"
+                  value={scan.qualityScore === null ? '—' : `${Number(scan.qualityScore).toFixed(2)} / 100`}
                 />
-                <DetailRow
-                  label="Avg aspect ratio"
-                  value={Number(measurements.avg_aspect_ratio).toFixed(2)}
-                />
+                {scan.finalGradeSource && (
+                  <DetailRow label="Grade source" value={scan.finalGradeSource.replace(/_/g, ' ')} />
+                )}
               </div>
-            ) : (
-              <p className="mt-3 text-sm text-muted">No measurement sample is available.</p>
-            )}
-            <p className="mt-3 text-[11px] leading-relaxed text-muted">
-              Physical dimensions and shape irregularity are unavailable: no camera calibration or
-              segmentation model is bundled.
-            </p>
-          </Card>
+              <p className="mt-3 text-[11px] leading-relaxed text-muted">
+                {scan.confidenceMethod ||
+                  'Confidence is the mean winning-class detection confidence, not a calibrated probability.'}
+              </p>
+            </Card>
+          )}
 
-          <Card className="p-5 animate-in">
-            <h3 className="font-display text-base font-semibold text-main">Defect analysis</h3>
-            <p className="mt-2 text-sm leading-relaxed text-muted">
-              {defects?.reason ||
-                'Defect detection is not supported by the preserved two-class model.'}
-            </p>
-            {Array.isArray(defects?.categories) && defects.categories.length > 0 && (
-              <ul className="mt-3 space-y-1.5">
-                {defects.categories.map((category) => (
-                  <li key={category.name} className="flex items-center justify-between gap-2 text-xs">
-                    <span className="text-muted">{category.name}</span>
-                    <span className="badge badge-neutral">Not supported</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Card>
+          {gradingOn && (
+            <Card className="p-5 animate-in">
+              <h3 className="font-display text-base font-semibold text-main">Image measurements</h3>
+              {measurements?.available ? (
+                <div className="mt-3">
+                  <DetailRow label="Method" value="Bounding-box, image space" />
+                  <DetailRow label="Units" value="pixels (uncalibrated)" />
+                  <DetailRow label="Samples" value={measurements.sample_count} />
+                  <DetailRow
+                    label="Avg major axis"
+                    value={`${Number(measurements.avg_major_axis_px).toFixed(1)} px`}
+                  />
+                  <DetailRow
+                    label="Avg minor axis"
+                    value={`${Number(measurements.avg_minor_axis_px).toFixed(1)} px`}
+                  />
+                  <DetailRow
+                    label="Avg aspect ratio"
+                    value={Number(measurements.avg_aspect_ratio).toFixed(2)}
+                  />
+                </div>
+              ) : (
+                <p className="mt-3 text-sm text-muted">No measurement sample is available.</p>
+              )}
+              <p className="mt-3 text-[11px] leading-relaxed text-muted">
+                Physical dimensions and shape irregularity are unavailable: no camera calibration or
+                segmentation model is bundled.
+              </p>
+            </Card>
+          )}
+
+          {gradingOn && (
+            <Card className="p-5 animate-in">
+              <h3 className="font-display text-base font-semibold text-main">Defect analysis</h3>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
+                {defects?.reason ||
+                  'Defect detection is not supported by the preserved two-class model.'}
+              </p>
+              {Array.isArray(defects?.categories) && defects.categories.length > 0 && (
+                <ul className="mt-3 space-y-1.5">
+                  {defects.categories.map((category) => (
+                    <li key={category.name} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="text-muted">{category.name}</span>
+                      <span className="badge badge-neutral">Not supported</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Card>
+          )}
 
           <Card className="p-5 animate-in">
             <h3 className="font-display text-base font-semibold text-main">Model provenance</h3>

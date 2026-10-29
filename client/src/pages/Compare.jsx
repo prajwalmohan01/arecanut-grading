@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import API, { apiErrorMessage, downloadApiFile } from '../api/axios';
 import { useToast } from '../context/ToastContext';
+import { usePolicy } from '../context/PolicyContext';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import EmptyState from '../components/ui/EmptyState';
 import Spinner from '../components/ui/Spinner';
 import ProtectedImage from '../components/ProtectedImage';
+import PolicyNotice from '../components/PolicyNotice';
 import { GradeBadge } from '../components/ui/Badge';
 import { SelectField } from '../components/ui/Field';
 import {
@@ -22,18 +24,44 @@ import {
   formatDateTime,
   formatNumber,
   formatPercent,
+  gradeAvailability,
+  gradeColor,
   supportedGradeLetters,
 } from '../utils/format';
 
-function ScanPanel({ scan, slot }) {
+function ScanPanel({ scan, slot, gradingOn, enabledLetters }) {
   const annotations = scan.images?.annotated || scan.images?.original;
-  const supported = supportedGradeLetters(scan);
+  const metrics = [];
+  if (gradingOn) {
+    enabledLetters.forEach((letter) => {
+      const availability = gradeAvailability(scan, letter);
+      metrics.push([
+        `Grade ${letter}`,
+        availability.supported
+          ? availability.count ?? scan[`grade${letter}`] ?? 0
+          : 'Not counted',
+        availability.supported ? gradeColor(`Grade ${letter}`) : 'var(--text-muted)',
+      ]);
+    });
+    if (enabledLetters.some((letter) => supportedGradeLetters(scan).includes(letter))) {
+      metrics.push(['Total counted', scan.totalCount, 'var(--text)']);
+    }
+    metrics.push(
+      ['Quality', scan.qualityScore === null ? '—' : Number(scan.qualityScore).toFixed(1), 'var(--text)'],
+      ['Confidence', formatPercent(scan.confidence), 'var(--text)'],
+      [
+        'Processing',
+        scan.processingMs === null ? '—' : `${(scan.processingMs / 1000).toFixed(2)}s`,
+        'var(--text)',
+      ]
+    );
+  }
   return (
     <Card className="overflow-hidden animate-in">
       <div className="flex items-center justify-between gap-2 border-b border-[color:var(--border)] px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="badge badge-neutral">Image {slot}</span>
-          <GradeBadge grade={scan.finalGrade} />
+          {gradingOn && <GradeBadge grade={scan.finalGrade} />}
         </div>
         <Link to={`/result/${scan.id}`} className="link inline-flex items-center gap-1 text-xs">
           Open report <ArrowRightIcon width={13} height={13} />
@@ -47,7 +75,7 @@ function ScanPanel({ scan, slot }) {
           <ProtectedImage
             url={annotations}
             label="Annotated image"
-            alt={`${scan.reportId || scan.filename} annotated prediction`}
+            alt={`${scan.reportId || scan.filename} ${gradingOn ? 'annotated prediction' : 'image'}`}
             className="max-h-72 w-full rounded-2xl object-contain"
           />
         ) : (
@@ -61,32 +89,26 @@ function ScanPanel({ scan, slot }) {
         <p className="truncate text-xs text-muted">{scan.filename}</p>
         <p className="mt-1 text-[11px] text-muted">{formatDateTime(scan.createdAt)}</p>
 
-        <div className="mt-4 grid grid-cols-2 gap-2">
-          {[
-            ['Grade A', scan.gradeA, 'var(--accent)'],
-            ['Grade B', scan.gradeB, 'var(--gold)'],
-            ['Grade C', supported.includes('C') ? scan.gradeC || 0 : 'Not evaluated', '#c77a2e'],
-            ['Grade D', supported.includes('D') ? scan.gradeD || 0 : 'Not evaluated', '#8f2f2f'],
-            ['Total', scan.totalCount, 'var(--text)'],
-            ['Quality', scan.qualityScore === null ? '—' : Number(scan.qualityScore).toFixed(1), 'var(--text)'],
-            ['Confidence', formatPercent(scan.confidence), 'var(--text)'],
-            [
-              'Processing',
-              scan.processingMs === null ? '—' : `${(scan.processingMs / 1000).toFixed(2)}s`,
-              'var(--text)',
-            ],
-          ].map(([label, value, color]) => (
-            <div
-              key={label}
-              className="rounded-xl border border-[color:var(--border)] bg-[color:var(--panel-soft)] px-3 py-2"
-            >
-              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted">{label}</p>
-              <p className="mt-0.5 text-lg font-semibold" style={{ color }}>
-                {typeof value === 'number' ? formatNumber(value) : value}
-              </p>
-            </div>
-          ))}
-        </div>
+        {gradingOn ? (
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            {metrics.map(([label, value, color]) => (
+              <div
+                key={label}
+                className="rounded-xl border border-[color:var(--border)] bg-[color:var(--panel-soft)] px-3 py-2"
+              >
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted">{label}</p>
+                <p className="mt-0.5 text-lg font-semibold" style={{ color }}>
+                  {typeof value === 'number' ? formatNumber(value) : value}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-4 text-[11px] leading-relaxed text-muted">
+            Grade, count, confidence, quality, and pricing fields are suppressed by the active
+            master prediction policy.
+          </p>
+        )}
       </div>
     </Card>
   );
@@ -95,6 +117,13 @@ function ScanPanel({ scan, slot }) {
 export default function Compare() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { policy } = usePolicy();
+  const gradingOn = policy?.masterEnabled !== false;
+  const enabledLetters = gradingOn
+    ? Array.isArray(policy?.enabledLetters)
+      ? policy.enabledLetters
+      : ['A', 'B']
+    : [];
   const [searchParams, setSearchParams] = useSearchParams();
   const initialIds = (searchParams.get('ids') || '')
     .split(',')
@@ -208,14 +237,20 @@ export default function Compare() {
 
   const scans = comparison?.scans || [];
   const [first, second] = scans;
+  const evaluatedLetters =
+    first && gradingOn
+      ? enabledLetters.filter((letter) => supportedGradeLetters(first).includes(letter))
+      : [];
   const deltas =
-    first && second
+    first && second && evaluatedLetters.length > 0
       ? [
-          ['Grade A', first.gradeA, second.gradeA, 'higher better'],
-          ['Grade B', first.gradeB, second.gradeB, 'composition dependent'],
-          ['Grade C', first.gradeC || 0, second.gradeC || 0, 'composition dependent'],
-          ['Grade D', first.gradeD || 0, second.gradeD || 0, 'composition dependent'],
-          ['Total detected', first.totalCount, second.totalCount, 'context only'],
+          ...evaluatedLetters.map((letter) => [
+            `Grade ${letter}`,
+            first[`grade${letter}`] || 0,
+            second[`grade${letter}`] || 0,
+            'composition dependent',
+          ]),
+          ['Total counted', first.totalCount, second.totalCount, 'context only'],
           ['Quality score', first.qualityScore, second.qualityScore, 'heuristic'],
           ['Confidence', first.confidence, second.confidence, 'mean winning class'],
         ]
@@ -223,6 +258,7 @@ export default function Compare() {
 
   return (
     <div className="space-y-5">
+      <PolicyNotice policy={policy} showPricing />
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div>
           <h2 className="font-display text-2xl font-semibold text-main">Compare predictions</h2>
@@ -258,7 +294,9 @@ export default function Compare() {
             <option value="">Choose a prediction…</option>
             {options.map((scan) => (
               <option key={scan.id} value={scan.id}>
-                {scan.reportId || scan.id.slice(-6)} — {scan.finalGrade} — {scan.filename}
+                {scan.reportId || scan.id.slice(-6)} —{' '}
+                {gradingOn && scan.finalGrade ? `${scan.finalGrade} — ` : ''}
+                {scan.filename}
               </option>
             ))}
           </SelectField>
@@ -282,7 +320,9 @@ export default function Compare() {
             <option value="">Choose a prediction…</option>
             {options.map((scan) => (
               <option key={scan.id} value={scan.id}>
-                {scan.reportId || scan.id.slice(-6)} — {scan.finalGrade} — {scan.filename}
+                {scan.reportId || scan.id.slice(-6)} —{' '}
+                {gradingOn && scan.finalGrade ? `${scan.finalGrade} — ` : ''}
+                {scan.filename}
               </option>
             ))}
           </SelectField>
@@ -312,8 +352,9 @@ export default function Compare() {
             }
             action={
               history.length < 2 ? (
-                <Button onClick={() => navigate('/upload')}>
-                  <UploadIcon width={16} height={16} /> New prediction
+                <Button onClick={() => navigate('/upload')} disabled={!gradingOn}>
+                  <UploadIcon width={16} height={16} />{' '}
+                  {gradingOn ? 'New prediction' : 'Grading disabled'}
                 </Button>
               ) : (
                 <Button variant="secondary" onClick={() => navigate('/history')}>
@@ -347,53 +388,75 @@ export default function Compare() {
       {comparison && !loading && !error && first && second && (
         <>
           <div className="grid gap-5 lg:grid-cols-2">
-            <ScanPanel scan={first} slot="1" />
-            <ScanPanel scan={second} slot="2" />
+            <ScanPanel
+              scan={first}
+              slot="1"
+              gradingOn={gradingOn}
+              enabledLetters={enabledLetters}
+            />
+            <ScanPanel
+              scan={second}
+              slot="2"
+              gradingOn={gradingOn}
+              enabledLetters={enabledLetters}
+            />
           </div>
 
-          <Card className="overflow-hidden animate-in">
-            <div className="border-b border-[color:var(--border)] px-5 py-4">
-              <h3 className="font-display text-lg font-semibold text-main">Metric differences</h3>
-              <p className="text-xs text-muted">
-                Image 2 minus image 1. Differences are descriptive, not a quality verdict.
-              </p>
+          {gradingOn && deltas.length > 0 ? (
+            <Card className="overflow-hidden animate-in">
+              <div className="border-b border-[color:var(--border)] px-5 py-4">
+                <h3 className="font-display text-lg font-semibold text-main">Metric differences</h3>
+                <p className="text-xs text-muted">
+                  Image 2 minus image 1. Differences are descriptive, not a quality verdict.
+                  Grades without a validated detector are omitted, never treated as zero.
+                </p>
+              </div>
+              <div className="table-shell">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Metric</th>
+                      <th>Image 1</th>
+                      <th>Image 2</th>
+                      <th>Difference</th>
+                      <th>Interpretation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deltas.map(([label, leftValue, rightValue, note]) => {
+                      const numeric =
+                        typeof leftValue === 'number' && typeof rightValue === 'number';
+                      const delta = numeric ? rightValue - leftValue : null;
+                      return (
+                        <tr key={label}>
+                          <td className="text-sm font-semibold text-main">{label}</td>
+                          <td className="text-sm text-main">
+                            {typeof leftValue === 'number' ? formatNumber(leftValue) : leftValue ?? '—'}
+                          </td>
+                          <td className="text-sm text-main">
+                            {typeof rightValue === 'number' ? formatNumber(rightValue) : rightValue ?? '—'}
+                          </td>
+                          <td className="text-sm font-semibold text-main">
+                            {numeric ? compareArrow(delta) : '—'}
+                          </td>
+                          <td className="text-xs text-muted">{note}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          ) : (
+            <div className="alert alert-warn items-start text-xs leading-relaxed">
+              <AlertIcon width={17} height={17} />
+              <span>
+                {gradingOn
+                  ? 'No enabled grade has a validated per-nut detector, so grade and count differences are not claimed.'
+                  : 'Grade, count, confidence, quality, and pricing differences are hidden while master prediction is off.'}
+              </span>
             </div>
-            <div className="table-shell">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Metric</th>
-                    <th>Image 1</th>
-                    <th>Image 2</th>
-                    <th>Difference</th>
-                    <th>Interpretation</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deltas.map(([label, leftValue, rightValue, note]) => {
-                    const numeric =
-                      typeof leftValue === 'number' && typeof rightValue === 'number';
-                    const delta = numeric ? rightValue - leftValue : null;
-                    return (
-                      <tr key={label}>
-                        <td className="text-sm font-semibold text-main">{label}</td>
-                        <td className="text-sm text-main">
-                          {typeof leftValue === 'number' ? formatNumber(leftValue) : leftValue ?? '—'}
-                        </td>
-                        <td className="text-sm text-main">
-                          {typeof rightValue === 'number' ? formatNumber(rightValue) : rightValue ?? '—'}
-                        </td>
-                        <td className="text-sm font-semibold text-main">
-                          {numeric ? compareArrow(delta) : '—'}
-                        </td>
-                        <td className="text-xs text-muted">{note}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+          )}
 
           <div className="alert alert-warn items-start text-xs leading-relaxed">
             <AlertIcon width={17} height={17} />

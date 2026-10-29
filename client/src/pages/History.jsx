@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API, { apiErrorMessage, downloadApiFile } from '../api/axios';
 import { useToast } from '../context/ToastContext';
+import { usePolicy } from '../context/PolicyContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import StatCard from '../components/ui/StatCard';
 import EmptyState from '../components/ui/EmptyState';
 import Spinner from '../components/ui/Spinner';
 import ConfirmDialog from '../components/ConfirmDialog';
+import PolicyNotice from '../components/PolicyNotice';
 import { GradeBadge } from '../components/ui/Badge';
 import { TextField, SelectField } from '../components/ui/Field';
 import {
@@ -22,15 +24,18 @@ import {
 import {
   csvDownloadName,
   downloadName,
+  enabledGradeLetters,
   formatDateTime,
   formatNumber,
   formatPercent,
+  gradeAvailability,
+  gradeColor,
   supportedGradeLetters,
 } from '../utils/format';
 
 const EMPTY_FILTERS = { q: '', grade: '', from: '', to: '', sort: 'newest' };
 
-function FilterBar({ draft, setDraft, onApply, onReset, loading }) {
+function FilterBar({ draft, setDraft, onApply, onReset, loading, grades }) {
   return (
     <Card className="p-4 sm:p-5 animate-in">
       <form
@@ -57,19 +62,35 @@ function FilterBar({ draft, setDraft, onApply, onReset, loading }) {
             onChange={(event) => setDraft({ ...draft, q: event.target.value })}
           />
         </div>
-        <SelectField
-          id="history-grade"
-          label="Grade"
-          value={draft.grade}
-          onChange={(event) => setDraft({ ...draft, grade: event.target.value })}
-        >
-          <option value="">All grades</option>
-          <option value="Grade A">Grade A</option>
-          <option value="Grade B">Grade B</option>
-          <option value="Grade C">Grade C</option>
-          <option value="Grade D">Grade D</option>
-          <option value="Invalid">Invalid</option>
-        </SelectField>
+        {grades.length > 0 ? (
+          <SelectField
+            id="history-grade"
+            label="Grade"
+            value={draft.grade}
+            onChange={(event) => setDraft({ ...draft, grade: event.target.value })}
+          >
+            <option value="">All enabled grades</option>
+            {grades.map((letter) => (
+              <option key={letter} value={`Grade ${letter}`}>
+                Grade {letter}
+              </option>
+            ))}
+            <option value="Invalid">Invalid (no detection)</option>
+          </SelectField>
+        ) : (
+          <div>
+            <label className="field-label" htmlFor="history-grade-disabled">
+              Grade
+            </label>
+            <input
+              id="history-grade-disabled"
+              className="input"
+              value="Grading hidden by policy"
+              disabled
+              readOnly
+            />
+          </div>
+        )}
         <TextField
           id="history-from"
           label="From"
@@ -122,6 +143,13 @@ function FilterBar({ draft, setDraft, onApply, onReset, loading }) {
 export default function History() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { policy } = usePolicy();
+  const gradingOn = policy?.masterEnabled !== false;
+  const enabledLetters = gradingOn
+    ? Array.isArray(policy?.enabledLetters)
+      ? policy.enabledLetters
+      : ['A', 'B']
+    : [];
 
   const [draft, setDraft] = useState(EMPTY_FILTERS);
   const [query, setQuery] = useState({ ...EMPTY_FILTERS, page: 1, limit: 10 });
@@ -160,12 +188,36 @@ export default function History() {
     };
   }, [query, reloadKey]);
 
+  useEffect(() => {
+    if (!query.grade) return;
+    if (query.grade === 'Invalid') {
+      if (!gradingOn) setQuery((current) => ({ ...current, grade: '', page: 1 }));
+      return;
+    }
+    const letter = query.grade.replace('Grade ', '');
+    if (!enabledLetters.includes(letter)) {
+      setQuery((current) => ({ ...current, grade: '', page: 1 }));
+    }
+  }, [enabledLetters, gradingOn, query.grade]);
+
   const items = data?.items || [];
   const summary = data?.summary || {};
   const pagination = data?.pagination || { page: 1, pages: 1, total: 0 };
   const selectedIds = useMemo(() => Object.keys(selected), [selected]);
   const activeFilterCount = ['q', 'grade', 'from', 'to'].filter((key) => query[key]).length;
   const empty = !loading && !error && items.length === 0;
+  const evaluatedLetters = useMemo(() => {
+    const first = items[0];
+    if (!first) return enabledLetters;
+    return enabledLetters.filter((letter) =>
+      supportedGradeLetters(first).includes(letter)
+    );
+  }, [enabledLetters, items]);
+  const countAvailable = evaluatedLetters.length > 0;
+  const gradeSummary = enabledLetters.map((letter) => ({
+    letter,
+    count: summary[`grade${letter}`] || 0,
+  }));
 
   function applyFilters() {
     if (draft.from && draft.to && draft.from > draft.to) {
@@ -268,6 +320,7 @@ export default function History() {
 
   return (
     <div className="space-y-5">
+      <PolicyNotice policy={policy} showPricing />
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div>
           <h2 className="font-display text-2xl font-semibold text-main">Prediction history</h2>
@@ -294,35 +347,62 @@ export default function History() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="Matching predictions"
-          value={formatNumber(summary.total || 0)}
-          hint={activeFilterCount ? `${activeFilterCount} active filter(s)` : 'All records'}
-          icon={<HistoryIcon width={17} height={17} />}
-        />
-        <StatCard
-          label="Grade A / B / C / D"
-          value={`${formatNumber(summary.gradeA || 0)} / ${formatNumber(summary.gradeB || 0)} / ${formatNumber(summary.gradeC || 0)} / ${formatNumber(summary.gradeD || 0)}`}
-          hint={`${formatNumber(summary.invalid || 0)} invalid · C/D require a four-class model`}
-          tone="a"
-        />
-        <StatCard
-          label="Detected nuts"
-          value={formatNumber(summary.totalNuts || 0)}
-          hint="Across matching predictions"
-          tone="b"
-        />
-        <StatCard
-          label="Avg quality score"
-          value={
-            summary.avgQualityScore === null || summary.avgQualityScore === undefined
-              ? '—'
-              : Number(summary.avgQualityScore).toFixed(1)
-          }
-          hint="Heuristic composition score"
-        />
-      </div>
+      {gradingOn ? (
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <StatCard
+            label="Matching predictions"
+            value={formatNumber(summary.total || 0)}
+            hint={activeFilterCount ? `${activeFilterCount} active filter(s)` : 'All records'}
+            icon={<HistoryIcon width={17} height={17} />}
+          />
+          <StatCard
+            label={`Grade ${enabledLetters.join(' / ')}`}
+            value={
+              gradeSummary.length
+                ? gradeSummary
+                    .map((item) =>
+                      countAvailable && evaluatedLetters.includes(item.letter)
+                        ? formatNumber(item.count)
+                        : '—'
+                    )
+                    .join(' / ')
+                : '—'
+            }
+            hint={
+              countAvailable
+                ? `${formatNumber(summary.invalid || 0)} invalid · enabled grades only`
+                : 'No enabled validated per-nut count'
+            }
+            tone="a"
+          />
+          <StatCard
+            label="Detected nuts"
+            value={countAvailable ? formatNumber(summary.totalNuts || 0) : '—'}
+            hint={
+              countAvailable
+                ? 'Across matching predictions'
+                : 'C/D advisory grades do not create nut counts'
+            }
+            tone="b"
+          />
+          <StatCard
+            label="Avg quality score"
+            value={
+              summary.avgQualityScore === null || summary.avgQualityScore === undefined
+                ? '—'
+                : Number(summary.avgQualityScore).toFixed(1)
+            }
+            hint="Heuristic composition score"
+          />
+        </div>
+      ) : (
+        <div className="alert alert-warn items-start text-xs">
+          <span>
+            Summary charts and grade statistics are hidden while master prediction is off.
+            Stored reports remain available below without grading fields.
+          </span>
+        </div>
+      )}
 
       <FilterBar
         draft={draft}
@@ -330,6 +410,7 @@ export default function History() {
         onApply={applyFilters}
         onReset={resetFilters}
         loading={loading}
+        grades={enabledLetters}
       />
 
       {error && (
@@ -385,11 +466,11 @@ export default function History() {
                   <tr>
                     <th aria-label="Select" />
                     <th>Report</th>
-                    <th>Grade</th>
-                    <th>A / B / C / D</th>
-                    <th>Total</th>
-                    <th>Quality</th>
-                    <th>Confidence</th>
+                    {gradingOn && <th>Grade</th>}
+                    {gradingOn && <th>{enabledLetters.join(' / ')}</th>}
+                    {gradingOn && <th>Total</th>}
+                    {gradingOn && <th>Quality</th>}
+                    {gradingOn && <th>Confidence</th>}
                     <th>Date</th>
                     <th aria-label="Actions" />
                   </tr>
@@ -397,7 +478,6 @@ export default function History() {
                 <tbody>
                   {items.map((scan) => {
                     const isSelected = Boolean(selected[scan.id]);
-                    const supported = supportedGradeLetters(scan);
                     return (
                       <tr key={scan.id}>
                         <td>
@@ -423,41 +503,58 @@ export default function History() {
                             </span>
                           </button>
                         </td>
-                        <td>
-                          <GradeBadge grade={scan.finalGrade} />
-                        </td>
-                        <td className="whitespace-nowrap text-xs">
-                          <span className="font-bold" style={{ color: 'var(--accent)' }}>
-                            {scan.gradeA}
-                          </span>{' '}
-                          /{' '}
-                          <span className="font-bold" style={{ color: 'var(--gold)' }}>
-                            {scan.gradeB}
-                          </span>{' '}
-                          /{' '}
-                          <span
-                            className="font-bold"
-                            style={{ color: '#c77a2e' }}
-                            title={supported.includes('C') ? undefined : 'Not evaluated by this model'}
-                          >
-                            {supported.includes('C') ? scan.gradeC || 0 : '—'}
-                          </span>{' '}
-                          /{' '}
-                          <span
-                            className="font-bold"
-                            style={{ color: '#8f2f2f' }}
-                            title={supported.includes('D') ? undefined : 'Not evaluated by this model'}
-                          >
-                            {supported.includes('D') ? scan.gradeD || 0 : '—'}
-                          </span>
-                        </td>
-                        <td className="text-sm text-main">{formatNumber(scan.totalCount)}</td>
-                        <td className="text-sm text-main">
-                          {scan.qualityScore === null
-                            ? '—'
-                            : Number(scan.qualityScore).toFixed(1)}
-                        </td>
-                        <td className="text-sm text-main">{formatPercent(scan.confidence)}</td>
+                        {gradingOn && (
+                          <td>
+                            <GradeBadge grade={scan.finalGrade} />
+                            {scan.finalGradeSource === 'gemini_advisory' && (
+                              <span className="ml-1 text-[10px] text-muted">advisory</span>
+                            )}
+                          </td>
+                        )}
+                        {gradingOn && (
+                          <td className="whitespace-nowrap text-xs">
+                            {enabledLetters.map((letter, index) => {
+                              const availability = gradeAvailability(scan, letter);
+                              return (
+                                <span key={letter}>
+                                  {index > 0 && ' / '}
+                                  <span
+                                    className="font-bold"
+                                    style={{
+                                      color: availability.supported
+                                        ? gradeColor(`Grade ${letter}`)
+                                        : 'var(--text-muted)',
+                                    }}
+                                    title={
+                                      availability.supported
+                                        ? undefined
+                                        : availability.reason || 'No validated detector'
+                                    }
+                                  >
+                                    {availability.supported
+                                      ? formatNumber(availability.count ?? scan[`grade${letter}`] ?? 0)
+                                      : '—'}
+                                  </span>
+                                </span>
+                              );
+                            })}
+                          </td>
+                        )}
+                        {gradingOn && (
+                          <td className="text-sm text-main">
+                            {countAvailable ? formatNumber(scan.totalCount) : '—'}
+                          </td>
+                        )}
+                        {gradingOn && (
+                          <td className="text-sm text-main">
+                            {scan.qualityScore === null
+                              ? '—'
+                              : Number(scan.qualityScore).toFixed(1)}
+                          </td>
+                        )}
+                        {gradingOn && (
+                          <td className="text-sm text-main">{formatPercent(scan.confidence)}</td>
+                        )}
                         <td className="whitespace-nowrap text-xs text-muted">
                           {formatDateTime(scan.createdAt)}
                         </td>
@@ -507,7 +604,6 @@ export default function History() {
             <div className="divide-y divide-[color:var(--border)] xl:hidden">
               {items.map((scan) => {
                 const isSelected = Boolean(selected[scan.id]);
-                const supported = supportedGradeLetters(scan);
                 return (
                   <div key={scan.id} className="p-4">
                     <div className="flex items-start gap-3">
@@ -531,14 +627,30 @@ export default function History() {
                         </button>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <GradeBadge grade={scan.finalGrade} />
-                          <span className="pill">{formatPercent(scan.confidence)} conf.</span>
-                          <span className="pill">{formatNumber(scan.totalCount)} nuts</span>
+                          {gradingOn && countAvailable && (
+                            <>
+                              <span className="pill">{formatPercent(scan.confidence)} conf.</span>
+                              <span className="pill">{formatNumber(scan.totalCount)} nuts</span>
+                            </>
+                          )}
+                          {gradingOn && !countAvailable && (
+                            <span className="pill">No enabled per-nut count</span>
+                          )}
                         </div>
-                        <p className="mt-2 text-[11px] text-muted">
-                          {formatDateTime(scan.createdAt)} · A {scan.gradeA} / B {scan.gradeB} / C{' '}
-                          {supported.includes('C') ? scan.gradeC || 0 : '—'} / D{' '}
-                          {supported.includes('D') ? scan.gradeD || 0 : '—'}
-                        </p>
+                        {gradingOn && (
+                          <p className="mt-2 text-[11px] text-muted">
+                            {formatDateTime(scan.createdAt)} ·{' '}
+                            {enabledLetters.map((letter, index) => {
+                              const availability = gradeAvailability(scan, letter);
+                              return (
+                                <span key={letter}>
+                                  {index > 0 ? ' / ' : ''}
+                                  {letter} {availability.supported ? availability.count : '—'}
+                                </span>
+                              );
+                            })}
+                          </p>
+                        )}
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           <Button
                             variant="secondary"

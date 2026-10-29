@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import API, { apiErrorMessage } from '../api/axios';
 import { useToast } from '../context/ToastContext';
+import { usePolicy } from '../context/PolicyContext';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import Modal from '../components/ui/Modal';
 import Spinner from '../components/ui/Spinner';
 import CameraCapture from '../components/CameraCapture';
+import PolicyNotice from '../components/PolicyNotice';
 import {
   AlertIcon,
   CameraIcon,
@@ -76,6 +78,8 @@ function StatusPill({ item }) {
 export default function Upload() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { policy } = usePolicy();
+  const gradingOn = policy?.masterEnabled !== false;
   const [searchParams] = useSearchParams();
   const inputRef = useRef(null);
   const abortRef = useRef(null);
@@ -244,6 +248,10 @@ export default function Upload() {
 
   async function submit(event) {
     event?.preventDefault();
+    if (!gradingOn) {
+      setError('AI grading is disabled by the administrator. Predictions are not run while master prediction is off.');
+      return;
+    }
     if (files.length === 0) {
       setError('Add at least one image.');
       return;
@@ -389,6 +397,7 @@ export default function Upload() {
 
   return (
     <div className="space-y-5">
+      <PolicyNotice policy={policy} showPricing />
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <Card className="p-5 sm:p-6 animate-in">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -408,7 +417,7 @@ export default function Upload() {
                 variant="secondary"
                 size="sm"
                 onClick={() => setCameraOpen(true)}
-                disabled={processing || files.length >= MAX_FILES}
+                disabled={processing || files.length >= MAX_FILES || !gradingOn}
               >
                 <CameraIcon width={15} height={15} /> Use camera
               </Button>
@@ -440,26 +449,26 @@ export default function Upload() {
               role="button"
               tabIndex={0}
               aria-label="Choose images to analyse"
-              onClick={() => !processing && inputRef.current?.click()}
+              onClick={() => !processing && gradingOn && inputRef.current?.click()}
               onKeyDown={(event) => {
-                if (!processing && (event.key === 'Enter' || event.key === ' ')) {
+                if (!processing && gradingOn && (event.key === 'Enter' || event.key === ' ')) {
                   event.preventDefault();
                   inputRef.current?.click();
                 }
               }}
               onDragOver={(event) => {
                 event.preventDefault();
-                if (!processing) setDragging(true);
+                if (!processing && gradingOn) setDragging(true);
               }}
               onDragLeave={() => setDragging(false)}
-              onDrop={processing ? undefined : onDrop}
+              onDrop={processing || !gradingOn ? undefined : onDrop}
               className={`relative flex flex-col items-center justify-center overflow-hidden rounded-3xl border-2 border-dashed p-5 text-center transition-all ${
                 files.length > 0 ? 'min-h-[9rem]' : 'min-h-[19rem]'
               } ${
                 dragging
                   ? 'border-[color:var(--accent)] bg-[color:var(--accent-soft)]'
                   : 'border-[color:var(--border-strong)] bg-[color:var(--panel-soft)] hover:border-[color:var(--accent)]'
-              } ${processing ? 'pointer-events-none opacity-80' : ''}`}
+              } ${processing || !gradingOn ? 'pointer-events-none opacity-60' : ''}`}
             >
               {files.length === 0 ? (
                 <>
@@ -528,9 +537,13 @@ export default function Upload() {
                               ? ` · ${item.pct}% uploaded`
                               : ''}
                             {item.status === 'done' && item.scan
-                              ? ` · ${item.scan.finalGrade}, ${formatNumber(
-                                  item.scan.totalCount
-                                )} nuts`
+                              ? gradingOn && item.scan.finalGrade
+                                ? item.scan.finalGradeSource === 'gemini_advisory'
+                                  ? ` · ${item.scan.finalGrade} Gemini advisory (no nut count)`
+                                  : ` · ${item.scan.finalGrade}, ${formatNumber(
+                                      item.scan.totalCount
+                                    )} nuts`
+                                : ' · Grading output hidden by policy'
                               : ''}
                             {item.status === 'error' && item.error ? ` · ${item.error}` : ''}
                           </p>
@@ -619,11 +632,15 @@ export default function Upload() {
                     Cancel
                   </Button>
                 )}
-                <Button type="submit" disabled={files.length === 0 || processing} size="lg">
+                <Button type="submit" disabled={files.length === 0 || processing || !gradingOn} size="lg">
                   {processing ? (
                     <>
                       <Spinner size={15} /> Grading {Math.min(files.length, finishedCount + 1)} of{' '}
                       {files.length}…
+                    </>
+                  ) : !gradingOn ? (
+                    <>
+                      <AlertIcon width={17} height={17} /> Grading disabled
                     </>
                   ) : (
                     <>
@@ -686,7 +703,8 @@ export default function Upload() {
                   placeholder={defaultLotName()}
                 />
                 <p className="mt-1.5 text-[11px] text-muted">
-                  Average nut weight and prices can be set on the lot page after grading.
+                  Average nut weight can be set on the lot page after grading. Prices follow the
+                  administrator's active pricing policy.
                 </p>
               </div>
             )}
@@ -696,11 +714,10 @@ export default function Upload() {
                 <p className="font-semibold text-main">{selectedLot.name}</p>
                 <p className="mt-1">
                   {formatNumber(selectedLot.totals?.scanCount || 0)} scan(s) ·{' '}
-                  {formatNumber(selectedLot.totals?.totalNuts || 0)} nuts ·{' '}
-                  {formatCurrency(
-                    selectedLot.valuation?.totalValue || 0,
-                    selectedLot.currency
-                  )}
+                  {formatNumber(selectedLot.totals?.totalNuts || 0)} nuts
+                  {policy?.pricingMode !== 'none' && selectedLot.valuation?.totalValue !== null
+                    ? ` · ${formatCurrency(selectedLot.valuation?.totalValue || 0, selectedLot.currency)}`
+                    : ''}
                 </p>
               </div>
             )}
@@ -721,7 +738,7 @@ export default function Upload() {
                 ['Grade A vs Grade B', true],
                 ['Image-level majority grade', true],
                 ['Bounding boxes + confidence', true],
-                ['C / D grades (shown but not evaluated)', false],
+                ['C / D grades (Gemini advisory only, never counted)', false],
                 ['Defect categories', false],
                 ['Physical size in mm', false],
               ].map(([label, supported]) => (

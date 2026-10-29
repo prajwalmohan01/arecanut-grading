@@ -1,7 +1,7 @@
 'use strict';
 
-const fs = require('fs');
 const PDFDocument = require('pdfkit');
+const { normalizeForPdf } = require('./imageNormalizer');
 
 const COLORS = {
   forest: '#1F5136',
@@ -31,14 +31,20 @@ function gradeColor(grade) {
  * supports. Legacy scans (no supportedGrades) fall back to A/B.
  */
 function gradeCountsText(scan) {
-  const supported = Array.isArray(scan.supportedGrades) && scan.supportedGrades.length
-    ? scan.supportedGrades
-    : ['A', 'B'];
-  const fields = { A: scan.gradeA, B: scan.gradeB, C: scan.gradeC, D: scan.gradeD };
-  const parts = supported
-    .filter((letter) => letter in fields)
-    .map((letter) => `${letter}: ${safe(fields[letter], 0)}`);
-  return `${safe(scan.totalCount, 0)} (${parts.join(', ')})`;
+  if (scan.gradingEnabled === false) return 'Not available (grading disabled by policy)';
+  const counts = scan.gradeCounts && typeof scan.gradeCounts === 'object'
+    ? scan.gradeCounts
+    : { A: scan.gradeA, B: scan.gradeB, C: scan.gradeC, D: scan.gradeD };
+  const parts = Object.entries(counts)
+    .filter(([, value]) => value !== null && value !== undefined)
+    .map(([letter, value]) => `${letter}: ${safe(value, 0)}`);
+  return `${safe(scan.totalCount, 0)}${parts.length ? ` (${parts.join(', ')})` : ''}`;
+}
+
+function gradeLabel(scan, grade) {
+  if (scan.gradingEnabled === false) return 'Disabled by administrator';
+  if (!grade) return 'Hidden by display policy';
+  return safe(grade);
 }
 
 function safe(value, fallback = 'Not available') {
@@ -112,38 +118,84 @@ function keyValue(doc, label, value, options = {}) {
   doc.y = Math.max(doc.y, y + 14);
 }
 
-function addImage(doc, buffer, caption, width = 500, height = 235) {
-  if (!buffer) {
+async function prepareImages(images = {}) {
+  const result = {};
+  const errors = [];
+  for (const kind of ['original', 'processed', 'annotated']) {
+    const buffer = images[kind];
+    if (!buffer) {
+      result[kind] = null;
+      continue;
+    }
+    try {
+      result[kind] = await normalizeForPdf(buffer, {
+        maxDimension: kind === 'original' ? 1800 : 1600,
+      });
+    } catch (error) {
+      result[kind] = null;
+      errors.push({
+        kind,
+        message: String(error.message || error).slice(0, 240),
+      });
+    }
+  }
+  result.errors = errors;
+  return result;
+}
+
+function addImage(doc, image, caption, width = 500, maxHeight = 245) {
+  if (!image || !image.buffer) {
     doc
       .font('Helvetica-Oblique')
       .fontSize(9)
       .fillColor(COLORS.muted)
-      .text(`${caption}: not available`, 48, doc.y + 2);
+      .text(`${caption}: not available`, 48, doc.y + 2, {
+        width: doc.page.width - 96,
+      });
     doc.moveDown(0.8);
     return;
   }
 
-  if (doc.y + height + 26 > doc.page.height - 60) doc.addPage();
+  const sourceWidth = Number(image.width) || width;
+  const sourceHeight = Number(image.height) || maxHeight;
+  const scale = Math.min(width / sourceWidth, maxHeight / sourceHeight);
+  const drawWidth = Math.max(1, sourceWidth * scale);
+  const drawHeight = Math.max(1, sourceHeight * scale);
+  const blockHeight = drawHeight + 26;
+
+  if (doc.y + blockHeight > doc.page.height - 60) doc.addPage();
   doc
     .font('Helvetica-Bold')
     .fontSize(8.5)
     .fillColor(COLORS.muted)
-    .text(caption, 48, doc.y);
+    .text(
+      `${caption} (${sourceWidth}×${sourceHeight}, aspect preserved)`,
+      48,
+      doc.y,
+      { width: doc.page.width - 96 }
+    );
   doc.moveDown(0.25);
+  const x = 48 + Math.max(0, (width - drawWidth) / 2);
   try {
-    doc.image(buffer, 48, doc.y, {
-      fit: [width, height],
-      align: 'center',
-      valign: 'center',
+    doc.image(image.buffer, x, doc.y, {
+      width: drawWidth,
+      height: drawHeight,
     });
-  } catch {
+  } catch (error) {
     doc
       .font('Helvetica-Oblique')
       .fontSize(9)
       .fillColor(COLORS.danger)
-      .text(`${caption}: image could not be embedded.`, 48, doc.y);
+      .text(
+        `${caption}: image could not be embedded (${String(
+          error.message || error
+        ).slice(0, 160)}).`,
+        48,
+        doc.y,
+        { width: doc.page.width - 96 }
+      );
   }
-  doc.y += height + 12;
+  doc.y += drawHeight + 12;
 }
 
 function addWarnings(doc, warnings) {
@@ -308,6 +360,182 @@ function addDetections(doc, detections) {
   doc.moveDown(0.7);
 }
 
+function addGeminiAdvisory(doc, advisory) {
+  if (!advisory || typeof advisory !== 'object') return;
+  sectionTitle(doc, 'Gemini visual advisory (non-detector)');
+  keyValue(doc, 'Status', advisory.status || 'unknown', {
+    width: 500,
+    color: advisory.status === 'ok' ? COLORS.charcoal : COLORS.danger,
+  });
+  keyValue(doc, 'Image-level hint', advisory.gradeHint || 'No hint', {
+    width: 500,
+  });
+  keyValue(doc, 'Model', advisory.model || 'Not available', { width: 500 });
+  keyValue(doc, 'Advisory only', 'Yes — no Grade C/D counts or bounding boxes', {
+    width: 500,
+    color: COLORS.danger,
+  });
+  if (Array.isArray(advisory.evidence) && advisory.evidence.length) {
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(8.5)
+      .fillColor(COLORS.muted)
+      .text('Visual evidence', 48, doc.y);
+    doc.moveDown(0.2);
+    doc.font('Helvetica').fontSize(8.3).fillColor(COLORS.charcoal);
+    advisory.evidence.forEach((item) => {
+      doc.text(`• ${safe(item)}`, 52, doc.y, {
+        width: doc.page.width - 104,
+      });
+      doc.moveDown(0.2);
+    });
+  }
+  if (Array.isArray(advisory.limitations) && advisory.limitations.length) {
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(8.5)
+      .fillColor(COLORS.muted)
+      .text('Limitations', 48, doc.y);
+    doc.moveDown(0.2);
+    doc.font('Helvetica').fontSize(8.3).fillColor(COLORS.charcoal);
+    advisory.limitations.forEach((item) => {
+      doc.text(`• ${safe(item)}`, 52, doc.y, {
+        width: doc.page.width - 104,
+      });
+      doc.moveDown(0.2);
+    });
+  }
+  doc
+    .font('Helvetica-Oblique')
+    .fontSize(8)
+    .fillColor(COLORS.danger)
+    .text(
+      safe(
+        advisory.note,
+        'This advisory is not a validated Grade C/D detector and must not be treated as a nut count or commercial grade.'
+      ),
+      48,
+      doc.y,
+      { width: doc.page.width - 96 }
+    );
+  doc.moveDown(0.6);
+}
+
+function addPricing(doc, pricing) {
+  if (!pricing || !pricing.active) return;
+  sectionTitle(doc, 'Price estimate');
+  keyValue(doc, 'Pricing mode', pricing.mode === 'live' ? 'Live market price' : 'Manual price', {
+    width: 500,
+  });
+  keyValue(doc, 'Status', pricing.status || 'unknown', {
+    width: 500,
+    color: pricing.status === 'ready' ? COLORS.charcoal : COLORS.gold,
+  });
+  keyValue(doc, 'Currency', pricing.currency || 'INR', { width: 500 });
+
+  if (Array.isArray(pricing.lineItems) && pricing.lineItems.length) {
+    doc.moveDown(0.25);
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor(COLORS.muted);
+    doc.text('Enabled grade prices', 48, doc.y);
+    doc.moveDown(0.2);
+    doc.font('Helvetica').fontSize(8.3).fillColor(COLORS.charcoal);
+    pricing.lineItems.forEach((item) => {
+      const subtotal =
+        item.subtotal === null || item.subtotal === undefined
+          ? 'subtotal needs measured weight'
+          : `${pricing.currency} ${Number(item.subtotal).toFixed(2)}`;
+      doc.text(
+        `${item.label}: ${safe(item.count, 0)} nuts × ${safe(
+          item.price
+        )} ${item.unitLabel} — ${subtotal}`,
+        52,
+        doc.y,
+        { width: doc.page.width - 104 }
+      );
+      doc.moveDown(0.2);
+    });
+  }
+
+  if (pricing.totalValue !== null && pricing.totalValue !== undefined) {
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(10)
+      .fillColor(COLORS.forest)
+      .text(
+        `Estimated total: ${pricing.currency} ${Number(pricing.totalValue).toFixed(2)}`,
+        48,
+        doc.y
+      );
+  } else {
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(9)
+      .fillColor(COLORS.gold)
+      .text(
+        'Total value is not claimed: measured/calibrated net weight is required for this pricing unit.',
+        48,
+        doc.y,
+        { width: doc.page.width - 96 }
+      );
+  }
+  doc.moveDown(0.25);
+  if (pricing.totalWeightKg) {
+    keyValue(doc, 'Weight used', `${pricing.totalWeightKg} kg (${safe(pricing.weightSource)})`, {
+      width: 500,
+    });
+  }
+  if (pricing.livePrice && pricing.livePrice.source) {
+    keyValue(doc, 'Market source', pricing.livePrice.source, { width: 500 });
+    keyValue(
+      doc,
+      'Market quote',
+      `${safe(pricing.livePrice.market)}, ${safe(pricing.livePrice.district)}, ${safe(
+        pricing.livePrice.state
+      )} — ${safe(pricing.livePrice.pricePerQuintal)} ${safe(
+        pricing.livePrice.unit
+      )} on ${safe(pricing.livePrice.arrivalDate)}`,
+      { width: 500 }
+    );
+  }
+  if (pricing.marketError) {
+    keyValue(doc, 'Market error', pricing.marketError.message, {
+      width: 500,
+      color: COLORS.danger,
+    });
+  }
+  doc
+    .font('Helvetica')
+    .fontSize(8)
+    .fillColor(COLORS.charcoal)
+    .text(safe(pricing.formula), 48, doc.y, { width: doc.page.width - 96 });
+  doc.moveDown(0.25);
+  doc
+    .font('Helvetica-Oblique')
+    .fontSize(7.8)
+    .fillColor(COLORS.muted)
+    .text(safe(pricing.note), 48, doc.y, { width: doc.page.width - 96 });
+  doc.moveDown(0.6);
+}
+
+function addPolicySummary(doc, scan) {
+  const policy = scan.predictionPolicy || {};
+  sectionTitle(doc, 'Active display policy');
+  keyValue(doc, 'Master prediction', policy.masterEnabled ? 'On' : 'Off', {
+    width: 500,
+  });
+  keyValue(
+    doc,
+    'Enabled grades',
+    Array.isArray(policy.enabledLetters) && policy.enabledLetters.length
+      ? policy.enabledLetters.join(', ')
+      : 'None',
+    { width: 500 }
+  );
+  keyValue(doc, 'Pricing mode', policy.pricingMode || 'none', { width: 500 });
+  keyValue(doc, 'Policy version', policy.version || '—', { width: 500 });
+  doc.moveDown(0.4);
+}
+
 function addFooters(doc) {
   const range = doc.bufferedPageRange();
   for (let index = range.start; index < range.start + range.count; index += 1) {
@@ -346,7 +574,7 @@ function collectPdf(doc) {
   });
 }
 
-async function buildPredictionReport(scan, images = {}) {
+async function buildPredictionReport(scan, images = {}, options = {}) {
   const doc = new PDFDocument({
     size: 'A4',
     margins: { top: 48, bottom: 60, left: 48, right: 48 },
@@ -357,6 +585,9 @@ async function buildPredictionReport(scan, images = {}) {
       Subject: 'Automated arecanut quality grading report',
     },
   });
+
+  const prepared = await prepareImages(images);
+  const gradingEnabled = scan.gradingEnabled !== false;
 
   drawHeader(doc, `Report ${scan.reportId || scan._id}`);
 
@@ -379,46 +610,61 @@ async function buildPredictionReport(scan, images = {}) {
     );
   doc.moveDown(0.9);
 
-  // Result card
+  // Result card. When the master switch is off this card must not contain a
+  // grade, count, confidence, quality score, or price.
   const cardY = doc.y;
   doc.roundedRect(48, cardY, doc.page.width - 96, 92, 10).fill(COLORS.mint);
   doc
     .font('Helvetica')
     .fontSize(8)
     .fillColor(COLORS.muted)
-    .text('FINAL GRADE', 66, cardY + 14);
+    .text(gradingEnabled ? 'FINAL GRADE' : 'GRADING STATUS', 66, cardY + 14);
   doc
     .font('Helvetica-Bold')
-    .fontSize(26)
-    .fillColor(gradeColor(scan.finalGrade))
-    .text(safe(scan.finalGrade), 66, cardY + 27);
-  doc
-    .font('Helvetica')
-    .fontSize(9)
-    .fillColor(COLORS.charcoal)
+    .fontSize(gradingEnabled ? 26 : 14)
+    .fillColor(gradingEnabled ? gradeColor(scan.finalGrade) : COLORS.danger)
     .text(
-      `Confidence: ${
-        scan.confidence === null || scan.confidence === undefined
-          ? 'Not available'
-          : `${Number(scan.confidence).toFixed(1)}%`
-      }`,
-      300,
-      cardY + 30
-    )
-    .text(
-      `Quality score: ${
-        scan.qualityScore === null || scan.qualityScore === undefined
-          ? 'Not available'
-          : `${Number(scan.qualityScore).toFixed(1)} / 100 (heuristic)`
-      }`,
-      300,
-      cardY + 46
-    )
-    .text(
-      `Detected nuts: ${gradeCountsText(scan)}`,
-      300,
-      cardY + 62
+      gradingEnabled ? gradeLabel(scan, scan.finalGrade) : 'Disabled by administrator',
+      66,
+      cardY + 30,
+      { width: 220 }
     );
+  if (gradingEnabled) {
+    doc
+      .font('Helvetica')
+      .fontSize(9)
+      .fillColor(COLORS.charcoal)
+      .text(
+        `Confidence: ${
+          scan.confidence === null || scan.confidence === undefined
+            ? 'Not available'
+            : `${Number(scan.confidence).toFixed(1)}%`
+        }`,
+        300,
+        cardY + 30
+      )
+      .text(
+        `Quality score: ${
+          scan.qualityScore === null || scan.qualityScore === undefined
+            ? 'Not available'
+            : `${Number(scan.qualityScore).toFixed(1)} / 100 (heuristic)`
+        }`,
+        300,
+        cardY + 46
+      )
+      .text(`Detected nuts: ${gradeCountsText(scan)}`, 300, cardY + 62);
+  } else {
+    doc
+      .font('Helvetica')
+      .fontSize(9)
+      .fillColor(COLORS.charcoal)
+      .text(
+        'Grade, count, confidence, quality, chart and price sections are hidden by the active display policy.',
+        300,
+        cardY + 34,
+        { width: doc.page.width - 366 }
+      );
+  }
   doc.y = cardY + 112;
 
   sectionTitle(doc, 'Prediction details');
@@ -428,42 +674,96 @@ async function buildPredictionReport(scan, images = {}) {
   keyValue(doc, 'Model', `${safe(scan.modelId)} v${safe(scan.modelVersion)}`);
   keyValue(doc, 'Model SHA-256', safe(scan.modelChecksum), { width: 500 });
   keyValue(doc, 'Original filename', safe(scan.filename), { width: 500 });
-  if (scan.confidenceMethod) {
+  if (gradingEnabled && scan.confidenceMethod) {
     keyValue(doc, 'Confidence method', scan.confidenceMethod, { width: 500 });
   }
-  if (scan.qualityMethod) {
+  if (gradingEnabled && scan.qualityMethod) {
     keyValue(doc, 'Quality method', scan.qualityMethod, { width: 500 });
   }
   doc.moveDown(0.5);
 
-  addGradeSupport(doc, scan);
+  if (gradingEnabled) addGradeSupport(doc, scan);
 
-  sectionTitle(doc, 'Images');
-  addImage(doc, images.original, 'Original Image');
-  addImage(doc, images.processed, 'Processed Image (Model-Input Preview)', 500, 235);
-  addImage(doc, images.annotated, 'Annotated Image (Model Detections)', 500, 235);
+  sectionTitle(doc, 'Evidence images');
+  addImage(doc, prepared.original, 'Original image');
+  if (gradingEnabled) {
+    addImage(doc, prepared.processed, 'Processed image (model-input preview)', 500, 235);
+    if (scan.annotatedImageAllowed === false) {
+      doc
+        .font('Helvetica-Oblique')
+        .fontSize(8.5)
+        .fillColor(COLORS.muted)
+        .text(
+          'The annotated image is hidden because it contains boxes for a grade disabled by the active display policy.',
+          48,
+          doc.y,
+          { width: doc.page.width - 96 }
+        );
+      doc.moveDown(0.5);
+    } else {
+      addImage(doc, prepared.annotated, 'Annotated image (model detections)', 500, 235);
+    }
+  } else {
+    doc
+      .font('Helvetica-Oblique')
+      .fontSize(8.5)
+      .fillColor(COLORS.muted)
+      .text(
+        'Processed and annotated model-output images are hidden while master prediction is off.',
+        48,
+        doc.y,
+        { width: doc.page.width - 96 }
+      );
+    doc.moveDown(0.5);
+  }
+  if (prepared.errors.length) {
+    doc
+      .font('Helvetica-Oblique')
+      .fontSize(8.5)
+      .fillColor(COLORS.danger)
+      .text(
+        `Image normalization warning: ${prepared.errors
+          .map((item) => `${item.kind} (${item.message})`)
+          .join('; ')}`,
+        48,
+        doc.y,
+        { width: doc.page.width - 96 }
+      );
+    doc.moveDown(0.5);
+  }
 
-  addDefects(doc, scan.defects);
-  addMeasurements(doc, scan.measurements);
-  addDetections(doc, scan.detections);
-  addWarnings(doc, scan.warnings);
+  if (gradingEnabled) {
+    addDefects(doc, scan.defects);
+    addMeasurements(doc, scan.measurements);
+    addDetections(doc, scan.detections);
+    addGeminiAdvisory(doc, scan.geminiAdvisory);
+    addPricing(doc, scan.pricing);
+    addWarnings(doc, scan.warnings);
 
-  sectionTitle(doc, 'Result summary');
-  doc
-    .font('Helvetica')
-    .fontSize(9)
-    .fillColor(COLORS.charcoal)
-    .text(
-      scan.totalCount > 0
-        ? `The model detected ${scan.totalCount} arecanut region(s) and assigned the image-level grade ${scan.finalGrade}. Grade composition: ${gradeCountsText(
-            scan
-          ).replace(/^\d+\s*/, '')}.`
-        : 'No arecanut regions were detected above the configured confidence threshold. The image-level result is Invalid. Please retake the photo with better lighting and less overlap.',
-      48,
-      doc.y,
-      { width: doc.page.width - 96, align: 'justify' }
-    );
-  doc.moveDown(0.7);
+    sectionTitle(doc, 'Result summary');
+    doc
+      .font('Helvetica')
+      .fontSize(9)
+      .fillColor(COLORS.charcoal)
+      .text(
+        scan.totalCount > 0 && scan.finalGrade
+          ? `The model detected ${scan.totalCount} enabled arecanut region(s) and assigned the image-level grade ${scan.finalGrade}. Grade composition: ${gradeCountsText(
+              scan
+            ).replace(/^\d+\s*/, '')}.`
+          : scan.unavailableGrades && scan.unavailableGrades.length
+          ? `The enabled Grade ${scan.unavailableGrades.join(
+              '/'
+            )} review is advisory only. No validated Grade C/D detector exists, so no Grade C/D nut count or final commercial grade is claimed.`
+          : 'No arecanut regions were detected above the configured confidence threshold. The image-level result is Invalid. Please retake the photo with better lighting and less overlap.',
+        48,
+        doc.y,
+        { width: doc.page.width - 96, align: 'justify' }
+      );
+    doc.moveDown(0.7);
+  }
+
+  addPolicySummary(doc, scan);
+
   doc
     .font('Helvetica-Oblique')
     .fontSize(7.5)
@@ -474,7 +774,7 @@ async function buildPredictionReport(scan, images = {}) {
   return collectPdf(doc);
 }
 
-async function buildComparisonReport(scans, imageSets = []) {
+async function buildComparisonReport(scans, imageSets = [], options = {}) {
   const doc = new PDFDocument({
     size: 'A4',
     margins: { top: 48, bottom: 60, left: 48, right: 48 },
@@ -484,6 +784,9 @@ async function buildComparisonReport(scans, imageSets = []) {
       Author: 'ARECANUT QUALITY GRADING SYSTEM',
     },
   });
+
+  const preparedSets = await Promise.all(imageSets.map((set) => prepareImages(set)));
+  const gradingEnabled = scans.some((scan) => scan.gradingEnabled !== false);
 
   drawHeader(doc, 'Prediction comparison');
   doc
@@ -506,29 +809,48 @@ async function buildComparisonReport(scans, imageSets = []) {
   const labels = [
     ['Report ID', (scan) => scan.reportId || scan._id],
     ['Prediction time', (scan) => formatDate(scan.createdAt)],
-    ['Grade', (scan) => scan.finalGrade],
-    [
-      'Confidence',
-      (scan) =>
-        scan.confidence === null || scan.confidence === undefined
-          ? '—'
-          : `${Number(scan.confidence).toFixed(1)}%`,
-    ],
-    [
-      'Quality score',
-      (scan) =>
-        scan.qualityScore === null || scan.qualityScore === undefined
-          ? '—'
-          : `${Number(scan.qualityScore).toFixed(1)} / 100 (heuristic)`,
-    ],
-    ['Detected nuts', (scan) => gradeCountsText(scan)],
-    [
-      'Avg aspect ratio',
-      (scan) =>
-        scan.measurements && scan.measurements.avg_aspect_ratio
-          ? scan.measurements.avg_aspect_ratio
-          : '—',
-    ],
+    ...(gradingEnabled
+      ? [
+          ['Grade', (scan) => gradeLabel(scan, scan.finalGrade)],
+          [
+            'Confidence',
+            (scan) =>
+              scan.gradingEnabled === false ||
+              scan.confidence === null ||
+              scan.confidence === undefined
+                ? '—'
+                : `${Number(scan.confidence).toFixed(1)}%`,
+          ],
+          [
+            'Quality score',
+            (scan) =>
+              scan.gradingEnabled === false ||
+              scan.qualityScore === null ||
+              scan.qualityScore === undefined
+                ? '—'
+                : `${Number(scan.qualityScore).toFixed(1)} / 100 (heuristic)`,
+          ],
+          ['Detected nuts', (scan) => gradeCountsText(scan)],
+          [
+            'Avg aspect ratio',
+            (scan) =>
+              scan.gradingEnabled === false
+                ? '—'
+                : scan.measurements && scan.measurements.avg_aspect_ratio
+                ? scan.measurements.avg_aspect_ratio
+                : '—',
+          ],
+          [
+            'Price estimate',
+            (scan) =>
+              scan.pricing && scan.pricing.active
+                ? scan.pricing.totalValue !== null && scan.pricing.totalValue !== undefined
+                  ? `${scan.pricing.currency} ${Number(scan.pricing.totalValue).toFixed(2)}`
+                  : 'Weight required'
+                : 'Not active',
+          ],
+        ]
+      : []),
     ['Model', (scan) => `${safe(scan.modelId)} v${safe(scan.modelVersion)}`],
   ];
 
@@ -550,7 +872,7 @@ async function buildComparisonReport(scans, imageSets = []) {
     if (index === labels.length - 1) doc.moveDown(0.5);
   });
 
-  sectionTitle(doc, 'Images');
+  sectionTitle(doc, 'Evidence images');
   for (let index = 0; index < scans.length; index += 1) {
     const scan = scans[index];
     doc
@@ -558,19 +880,55 @@ async function buildComparisonReport(scans, imageSets = []) {
       .fontSize(10)
       .fillColor(COLORS.forest)
       .text(
-        `${index + 1}. ${scan.reportId || scan._id} — ${scan.finalGrade}`,
+        gradingEnabled
+          ? `${index + 1}. ${scan.reportId || scan._id} — ${gradeLabel(
+              scan,
+              scan.finalGrade
+            )}`
+          : `${index + 1}. ${scan.reportId || scan._id}`,
         48,
         doc.y
       );
     doc.moveDown(0.3);
-    addImage(doc, imageSets[index] && imageSets[index].original, 'Original Image');
-    addImage(
-      doc,
-      imageSets[index] && imageSets[index].annotated,
-      'Annotated Image (model detections)'
-    );
-    addWarnings(doc, scan.warnings);
+    const prepared = preparedSets[index] || {};
+    addImage(doc, prepared.original, 'Original image');
+    if (gradingEnabled) {
+      addImage(
+        doc,
+        prepared.processed,
+        'Processed image (model-input preview)',
+        500,
+        235
+      );
+      if (scan.annotatedImageAllowed === false) {
+        doc
+          .font('Helvetica-Oblique')
+          .fontSize(8.5)
+          .fillColor(COLORS.muted)
+          .text(
+            'Annotated image hidden because it contains a grade disabled by policy.',
+            48,
+            doc.y,
+            { width: doc.page.width - 96 }
+          );
+        doc.moveDown(0.5);
+      } else {
+        addImage(
+          doc,
+          prepared.annotated,
+          'Annotated image (model detections)',
+          500,
+          235
+        );
+      }
+    }
+    if (gradingEnabled && scan.geminiAdvisory) {
+      addGeminiAdvisory(doc, scan.geminiAdvisory);
+    }
+    if (gradingEnabled) addWarnings(doc, scan.warnings);
   }
+
+  if (scans[0]) addPolicySummary(doc, scans[0]);
 
   doc
     .font('Helvetica-Oblique')

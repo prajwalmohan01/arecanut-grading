@@ -68,9 +68,9 @@ export function gradeColor(grade) {
 }
 
 /** Per-grade counts for a scan, using the API's gradeCounts when present. */
-export function gradeBreakdown(scan) {
+export function gradeBreakdown(scan, letters = GRADE_LETTERS) {
   const counts = scan?.gradeCounts || {};
-  return GRADE_LETTERS.map((letter) => ({
+  return GRADE_LETTERS.filter((letter) => letters.includes(letter)).map((letter) => ({
     letter,
     grade: `Grade ${letter}`,
     count: Number(counts[letter] ?? scan?.[`grade${letter}`] ?? 0),
@@ -79,10 +79,81 @@ export function gradeBreakdown(scan) {
 
 /** Grades the checkpoint that produced this scan actually supports. */
 export function supportedGradeLetters(scan) {
+  if (scan?.gradingEnabled === false || scan?.predictionPolicy?.masterEnabled === false) {
+    return [];
+  }
   if (Array.isArray(scan?.supportedGrades) && scan.supportedGrades.length) {
     return scan.supportedGrades.filter((letter) => GRADE_LETTERS.includes(letter));
   }
   return ['A', 'B'];
+}
+
+/** Grades the active administrator policy allows this user to see. */
+export function enabledGradeLetters(policy, scan) {
+  const policyLetters =
+    policy?.masterEnabled === false
+      ? []
+      : Array.isArray(policy?.enabledLetters)
+      ? policy.enabledLetters
+      : GRADE_LETTERS;
+  const scanPolicy = scan?.predictionPolicy?.enabledLetters;
+  const letters = Array.isArray(scanPolicy) ? scanPolicy : policyLetters;
+  return GRADE_LETTERS.filter((letter) => letters.includes(letter));
+}
+
+/** Whether the active model actually evaluates this enabled grade. */
+export function gradeIsEvaluated(scan, letter) {
+  return supportedGradeLetters(scan).includes(letter);
+}
+
+export function gradeAvailability(scan, letter) {
+  const availability = scan?.gradeAvailability?.[letter];
+  if (availability) return availability;
+  const evaluated = gradeIsEvaluated(scan, letter);
+  return {
+    enabled: true,
+    supported: evaluated,
+    count: evaluated
+      ? Number(scan?.gradeCounts?.[letter] ?? scan?.[`grade${letter}`] ?? 0)
+      : null,
+    reason: evaluated
+      ? null
+      : 'No validated detector for this grade is installed. No count was invented.',
+  };
+}
+
+export function pricingStatusText(pricing) {
+  if (!pricing) return 'Pricing is unavailable.';
+  switch (pricing.status) {
+    case 'pricing_disabled':
+      return pricing.reason || 'No pricing mode is active.';
+    case 'no_detections':
+      return 'No enabled nut counts are available for a price estimate.';
+    case 'no_configured_prices':
+      return 'No manual prices are configured for the enabled grades.';
+    case 'needs_weight':
+      return 'Enter measured net weight in kg to calculate a weight-based total.';
+    case 'live_unavailable':
+      return (
+        pricing.marketError?.message ||
+        'The live market quote is unavailable. No price was invented.'
+      );
+    case 'no_total':
+      return 'A total cannot be calculated from the configured prices.';
+    case 'ready':
+      return pricing.estimateOnly
+        ? 'Indicative estimate only — not a mandi quote or guaranteed transaction price.'
+        : 'Price estimate available.';
+    default:
+      return pricing.note || 'Pricing status is unavailable.';
+  }
+}
+
+export function pricingUnitLabel(unit) {
+  if (unit === 'per_nut') return 'per nut';
+  if (unit === 'per_quintal') return 'per quintal';
+  if (unit === 'per_kg') return 'per kg';
+  return unit || '—';
 }
 
 export function compareArrow(value) {

@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { lazy, Suspense, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { PolicyProvider } from './context/PolicyContext';
 import { ToastProvider } from './context/ToastContext';
 import AppLayout from './layouts/AppLayout';
 import Login from './pages/Login';
@@ -15,6 +16,7 @@ import LotDetail from './pages/LotDetail';
 import Compare from './pages/Compare';
 import Performance from './pages/Performance';
 import Profile from './pages/Profile';
+import AdminSettings from './pages/AdminSettings';
 import NotFound from './pages/NotFound';
 import { LeafIcon } from './components/Icons';
 import Spinner from './components/ui/Spinner';
@@ -56,6 +58,14 @@ function ProtectedRoute({ children }) {
   return <AppLayout>{children}</AppLayout>;
 }
 
+function AdminRoute({ children }) {
+  const { user } = useAuth();
+  if (user?.role !== 'admin') {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return children;
+}
+
 function PublicOnlyRoute({ children }) {
   const { isAuthenticated, booting } = useAuth();
   const location = useLocation();
@@ -78,10 +88,11 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <ToastProvider>
-          <ScrollToTop />
-          <Suspense fallback={<Splash />}>
-            <Routes>
+        <PolicyProvider>
+          <ToastProvider>
+            <ScrollToTop />
+            <Suspense fallback={<Splash />}>
+              <Routes>
             <Route path="/" element={<Navigate to="/home" replace />} />
             <Route
               path="/login"
@@ -188,6 +199,16 @@ export default function App() {
               }
             />
             <Route
+              path="/admin/settings"
+              element={
+                <ProtectedRoute>
+                  <AdminRoute>
+                    <AdminSettings />
+                  </AdminRoute>
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/manual"
               element={
                 <ProtectedRoute>
@@ -272,9 +293,10 @@ export default function App() {
               element={<VerifyAssessment />}
             />
             <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
-        </ToastProvider>
+              </Routes>
+            </Suspense>
+          </ToastProvider>
+        </PolicyProvider>
       </AuthProvider>
     </BrowserRouter>
   );

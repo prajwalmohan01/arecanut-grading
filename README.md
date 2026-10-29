@@ -2,9 +2,11 @@
 
 MERN application for detecting and grading individual arecanuts in a tray image, with a
 preserved YOLOv8 detector, a processed/annotated image preview, prediction history, and a
-PDF report. It also includes a separate manual grading workspace for user-assigned Grade A
-and Grade B records, batches, review and correction history, PDF/CSV reports, QR
-verification, and user-entered value calculations.
+policy-aware PDF report. Admin-controlled switches gate master prediction, individual
+grades, Gemini-assisted Grade C/D advisory review, live AGMARKNET pricing, and manual
+pricing. It also includes a separate manual grading workspace for user-assigned Grade A and
+Grade B records, batches, review and correction history, PDF/CSV reports, QR verification,
+and user-entered value calculations.
 
 The repository is self-contained: the trained weights (`ml_service/weights/best.pt`,
 6.25 MB) are committed, so a second PC can run inference by cloning and installing. No
@@ -16,15 +18,17 @@ retraining, no dataset download, and no Kaggle account are required for normal u
 | --- | --- |
 | Individual-nut detection (dense trays) | Yes, YOLOv8 detect, tiled inference |
 | Grade A / Grade B | Yes |
-| Grade C / Grade D | **No.** The checkpoint has only `GradeA` and `GradeB` classes |
+| Grade C / Grade D detector | **No.** The checkpoint has only `GradeA` and `GradeB` classes |
+| Grade C / Grade D advisory | Optional Gemini image-level advisory only; never a detector or nut count |
 | Defect detection (black spots, cracks, mold, discoloration) | **No.** No defect model is bundled |
 | Physical size in millimetres | **No.** Requires camera calibration; values are image-space only |
-| PDF report with original, annotated and processed images | Yes |
+| PDF report with original, annotated and processed images | Yes, subject to the active admin policy |
 
 Grade support is derived at runtime from the loaded checkpoint's own class names. The
 application is four-grade capable, but it will report C/D only when an installed checkpoint
-actually contains `GradeC`/`GradeD` classes. It never relabels A/B predictions as C/D and
-never invents defects, measurements or confidence scores.
+actually contains `GradeC`/`GradeD` classes, or as a clearly labelled Gemini visual advisory
+when an administrator enables that path. It never relabels A/B predictions as C/D and never
+invents defects, measurements, counts, confidence scores, or market prices.
 
 The bundled model metadata is in `ml_service/model_metadata.json`, including the SHA-256
 checksum and documented limitations.
@@ -51,7 +55,121 @@ dataset, creates a Kaggle cache, or trains a model.
 
 The model support table above is authoritative: Grade C and Grade D are displayed in the
 UI for completeness, but are marked **not evaluated** while the bundled two-class
-checkpoint is active.
+checkpoint is active. An administrator can optionally turn on Gemini-assisted advisory
+review for C/D; that is a non-counting visual opinion, not a validated C/D prediction.
+
+After signing in, an admin can open **Admin → Admin settings** (`/admin/settings`) to
+control master prediction, grade visibility, Gemini advisory, and pricing. Non-admin users
+see only the policy-filtered result, history, lots, charts, CSV, and PDF output.
+
+## Admin policy, Gemini advisory, and pricing
+
+### Admin settings and display policy
+
+Admins use **Admin → Admin settings** (`/admin/settings`). The controls are persisted in a
+single MongoDB `SystemSettings` document with optimistic versioning and an admin audit
+entry, so they are not hard-coded in React or in `.env`. The defaults are: master prediction
+on, Grade A/B on, Grade C/D off, Gemini advisory off, and **no active pricing mode**.
+
+| Control | What it changes |
+| --- | --- |
+| Master prediction | Global on/off gate for model grading and pricing |
+| Grade A, B, C, D | Which grades may appear in results, counts, charts, CSV, lots, and PDF |
+| Gemini-assisted prediction | Enables the optional non-counting Gemini review path |
+| Live Market Price | Uses an AGMARKNET quote per kg; mutually exclusive with manual pricing |
+| Manual Price Mode | Uses admin-entered per-grade prices; mutually exclusive with live pricing |
+
+The API applies policy server-side; it is not a visual-only hide. When a grade is disabled,
+its counts, detections, final grade, confidence/quality derived from it, annotations, CSV
+columns/values, lot aggregation, and PDF sections are removed from the response. Historical
+scans remain stored and are filtered non-destructively, so re-enabling a grade makes the old
+record visible again.
+
+When **Master prediction** is off, the API does **not** run inference and suppresses all
+grading output: grades, counts, percentages, confidence, quality, charts, measurements,
+defects, warnings, processed/annotated images, pricing, and grade/price PDF sections. The
+original upload may remain viewable. History and lot totals remain stored but are filtered;
+changing the master switch is not a data-deletion operation.
+
+Because annotation boxes reveal the class of every detection, the annotated image and
+annotated PDF evidence are exposed only when **every grade supported by the installed
+checkpoint** is enabled. For the bundled checkpoint that means both A and B must be on.
+The processed preview is also hidden while master prediction is off.
+
+The authenticated `GET /api/settings` response exposes the effective policy (without
+secrets), so the client can hide controls immediately. `GET /api/admin/settings` additionally
+returns the editable settings, Gemini key counts/state, market status, and current version.
+
+### Gemini-assisted Grade C/D advisory
+
+The bundled checkpoint cannot detect C/D. If an admin enables Grade C and/or D, the settings
+API requires the Gemini-assisted switch to be enabled as well. Gemini is used only for an
+image-level advisory: it must return strict JSON containing an advisory grade hint, evidence
+text, and limitations. It is **never** used as an object detector, never creates or edits
+bounding boxes, and never invents C/D nut counts, confidence percentages, or prices.
+
+- A C/D advisory can become the displayed final grade only when no model-supported A/B grade
+  is enabled, the active policy permits the hinted C/D grade, and the advisory names that
+  grade; it is labelled `Gemini visual advisory (not a validated detector)`.
+- When A/B are also enabled, the model result remains the final grade; the Gemini note is
+  supplementary and policy-filtered.
+- If the advisory names a grade hidden by policy, its text/evidence is suppressed.
+- If no key is configured or every key fails, the app reports Gemini as unavailable and
+  keeps C/D unsupported. It does not fail over to a fabricated result.
+
+Gemini keys are **server-only**. `GEMINI_API_KEY` plus `GEMINI_API_KEY_1` through
+`GEMINI_API_KEY_10` are deduplicated, used in order, and fail over on key/permission/quota
+errors. Requests have bounded timeouts (default 30 s), bounded retries for transient 5xx
+errors (default 2), key cooldowns (default 60 s), and a configurable input image maximum
+(default 1280 px). 429 quota/rate-limit responses cool the key and immediately try the next
+key. Key values are redacted from API responses, errors, audit entries, and logs; use
+`GET /api/admin/gemini/status` to see only counts and cooldown state.
+
+The Gemini model, timeout, retry count, and image maximum can be changed in Admin settings
+or supplied as defaults with `GEMINI_MODEL`, `GEMINI_TIMEOUT_MS`, `GEMINI_MAX_RETRIES`, and
+`GEMINI_IMAGE_MAX_DIMENSION`. The default model is `gemini-3.5-flash`. `GEMINI_COOLDOWN_MS`
+and `GEMINI_MAX_OUTPUT_TOKENS` are environment defaults. No key is committed to the
+repository.
+
+### Live market and manual pricing
+
+**No active pricing mode means no price estimate at all.** `totalValue` is `null`, not zero.
+Manual and live modes are mutually exclusive; the settings service rejects an update that
+attempts to enable both.
+
+- **Manual Price Mode** uses administrator-entered prices per grade. Each grade can use
+  `per_nut`, `per_kg`, or `per_quintal`. Per-nut totals use enabled nut counts. Per-kg and
+  per-quintal totals require a measured/calibrated weight because the model does not measure
+  physical weight from a photo.
+- **Live Market Price** uses the public AGMARKNET 2.0 daily price dashboard by default. It
+  needs no API key. The admin can filter by state, district, market, commodity, variety, and
+  market grade. The public dashboard publishes a weighted average, so that is the quote
+  shown; the optional data.gov.in fallback can provide modal/min/max fields when its key is
+  configured. Quotes are stored in INR per quintal and converted to INR per kg by dividing
+  by 100. No matching record, network failure, or a stale cache produces an explicit
+  unavailable/stale status with no invented number.
+- **Measured lot weight** (`measuredWeightKg`) is the only weight allowed to drive a lot
+  total. `avgNutWeightG` is an optional display/estimate-only assumption; it is never used
+  to claim a priced lot total. For mixed manual units, the measured lot weight is allocated
+  across all counted enabled grades, and only the weight-priced grades receive a
+  weight-based value. That allocation assumes an equal average nut weight across grades;
+  per-nut pricing is the alternative when that assumption is unacceptable.
+- Pricing status values include `needs_weight`, `no_detections`, `no_configured_prices`,
+  `live_unavailable`, `pricing_disabled`, `no_total`, and `ready`. The UI labels the result
+  as an estimate and never describes it as a certified valuation.
+
+Live market setup is keyless by default (`MARKET_PRICE_SOURCE=agmarknet_public`). The public
+AGMARKNET 2.0 dashboard is an undocumented front-end service, not a contractual REST API, so
+treat it as daily administrative data rather than real-time transaction pricing. Set
+`MARKET_PRICE_SOURCE=data_gov_in` to use the optional data.gov.in resource
+`9ef84268-d588-465a-a308-a864a43d0070` as the primary source; that path requires a free key
+in `DATA_GOV_IN_API_KEY` (or `AGMARKNET_API_KEY`). When the public source fails, the same key
+is used automatically as a fallback, if present. `MARKET_PUBLIC_BASE_URL`,
+`MARKET_FILTERS_CACHE_MINUTES`, `MARKET_LOOKBACK_DAYS`, `MARKET_PRICE_RESOURCE_ID`,
+`MARKET_PRICE_TIMEOUT_MS`, and `MARKET_PRICE_CACHE_MINUTES` override the defaults. If no state
+or market is selected, a refresh uses a median of matching nationwide records; choose a state
+and market for a local quote. The admin can force a refresh from the Admin page; regular users
+can read the active quote only while live mode and master prediction are on.
 
 ## Architecture
 
@@ -72,11 +190,12 @@ checkpoint is active.
 ├── setup.sh                      # Portable one-time setup (Linux/macOS)
 ├── start.ps1                     # Root startup helper (PowerShell)
 ├── client/                       # React frontend
-│   └── src/pages/manual/         # Authenticated manual grading workspace
+│   ├── src/pages/manual/         # Authenticated manual grading workspace
+│   └── src/pages/AdminSettings.jsx # Admin policy, Gemini, and pricing controls
 ├── server/                       # Express API, MongoDB models, PDF generation
 │   ├── .env.example
-│   ├── routes/                   # AI, auth, manual grading, and public verification
-│   ├── services/
+│   ├── routes/                   # AI, auth, manual grading, admin, settings, market
+│   ├── services/                 # Inference, policy, pricing, Gemini, AGMARKNET
 │   ├── utils/pdf.js              # AI report PDF
 │   ├── utils/manualPdf.js        # Manual record, batch, and assessment PDFs
 │   ├── tests/                    # node:test unit and in-memory MongoDB integration tests
@@ -265,15 +384,21 @@ The frontend proxies `/api` and `/uploads` to `http://localhost:5000` in develop
 - **Batch upload** is client-driven: the browser posts images one at a time to
   `POST /api/scans/predict`, so the CPU model is never asked to run two predictions at once.
   A failed image does not stop the rest of the queue.
-- A **lot** groups scans and stores optional pricing assumptions (`prices.A`…`prices.D`,
-  `avgNutWeightG`, `currency`). Deleting a lot keeps its predictions in history and only
-  clears their lot assignment.
-- The estimated value is
-  `nuts × avgNutWeightG ÷ 1000 × pricePerKg`, summed per grade. `avgNutWeightG` is a
-  user-provided assumption; the bundled model measures boxes in image space only, so weight
-  is **not** measured from the photo. The UI and CSV label the result as an estimate.
-- The history CSV contains a summary block (filters, counts, majority grades, detected nuts)
-  followed by a blank line and the per-prediction table.
+- A **lot** groups scans and stores an optional **measured net lot weight**
+  (`measuredWeightKg`), an optional estimated average nut weight (`avgNutWeightG`), manual
+  prices, and a currency. Deleting a lot keeps its predictions in history and only clears
+  their lot assignment.
+- A lot total is calculated only from `measuredWeightKg` and the active admin pricing
+  policy. `avgNutWeightG` can display an estimated weight (`enabled count × avgNutWeightG ÷
+  1000`) for context, but it **never** drives a priced total. The bundled model measures
+  boxes in image space only; it does not measure physical weight.
+- Manual per-kg/per-quintal values allocate the measured lot weight across all counted
+  enabled grades. This is an explicit estimate that assumes equal average nut weight across
+  those grades. If that assumption is not acceptable, configure per-nut pricing instead.
+- The history CSV contains a summary block followed by a blank line and the per-prediction
+  table. When master prediction is off or a grade is disabled, the corresponding
+  grade/count/confidence/pricing columns and values are omitted or blank; historical data is
+  not deleted.
 
 No training runs at startup or during prediction.
 
@@ -307,8 +432,8 @@ result.
 - **Reports** include record PDF/CSV, batch PDF/CSV, and filtered record/price CSV exports.
   Empty values remain empty and every report states that grades were manually assigned.
 - **Value calculator** (`/manual/calculator`) multiplies a user-entered weight by a
-  user-entered INR price per kilogram. The app does not fetch live market prices and does
-  not invent a price when none is entered.
+  user-entered INR price per kilogram. This manual calculator does not use the AI pricing
+  policy or live market prices and does not invent a price when none is entered.
 - **Digital assessments** can be created for graded records. The assessment PDF contains a
   QR code and verification link for `/verify/:token`. The public response intentionally
   omits images, notes, supplier details, reviewer/account details, and correction history.
@@ -317,8 +442,9 @@ result.
   creates, updates, reviews, corrections, exports, assessments, batch changes, and price
   records.
 
-The manual module adds no admin dashboard, language switcher, AI inference, or automated
-grading controls.
+The AI policy switches live in the separate **Admin settings** page and do not weaken the
+manual workspace's rule that every manual grade is human-selected. The manual module does
+not use AI inference, live market pricing, or automatic grading controls.
 
 ## Inference settings for dense images
 
@@ -691,23 +817,48 @@ deliberately limited public assessment verification endpoint.
 | `GET` | `/api/scans/history` | Paginated history, filters (`grade`, `from`, `to`, `q`, `lot`, `sort`), summary |
 | `GET` | `/api/scans/export.csv` | Filtered history with a summary block (`grade`, `from`, `to`, `q`, `lot`, `sort`) |
 | `GET` | `/api/scans/stats` | Aggregate statistics |
-| `POST` | `/api/lots` | Create a lot with optional prices and average nut weight |
-| `GET` | `/api/lots` | List lots with combined counts and valuation |
+| `POST` | `/api/lots` | Create a lot with optional manual prices, measured lot weight, and estimated average nut weight |
+| `GET` | `/api/lots` | List lots with policy-filtered counts and valuation |
 | `GET` | `/api/lots/:id` | Lot summary plus its scans |
-| `PATCH` | `/api/lots/:id` | Update lot details, prices, or average nut weight |
-| `GET` | `/api/lots/:id/export.csv` | Lot summary and per-scan CSV |
+| `PATCH` | `/api/lots/:id` | Update lot details, manual prices, measured weight, or estimated average nut weight |
+| `GET` | `/api/lots/:id/export.csv` | Policy-filtered lot summary and per-scan CSV |
 | `DELETE` | `/api/lots/:id` | Delete a lot; its scans are unassigned, not deleted |
 | `GET` | `/api/health` | Server, database and model readiness |
 
-A prediction response contains `gradeA`, `gradeB`, `gradeC`, `gradeD`, `totalCount`,
-`finalGrade`, and a `scan` object with `gradeCounts`, `supportedGrades`, `lot`, `detections`,
-`warnings`, and model metadata.
+A prediction response contains policy-filtered `gradeA`, `gradeB`, `gradeC`, `gradeD`,
+`totalCount`, `finalGrade`, and a `scan` object with `gradeCounts`, `supportedGrades`, `lot`,
+`detections`, `warnings`, and model metadata. Disabled grades and master-off output are
+removed before serialization. The `pricing` object always carries an explicit status and
+`totalValue: null` when no estimate is available.
 
-Lot valuation uses this formula per grade, then sums the result:
+Lot valuation uses the active pricing mode. A weight-based total is:
 
 ```text
-estimated value = detected nuts × avgNutWeightG ÷ 1000 × pricePerKg
+estimated value = user-entered measured lot weight (kg) × applicable price per kg
 ```
+
+For mixed manual per-nut and per-kg/per-quintal grades, the measured lot weight is allocated
+across all counted enabled grades before the weight-based portion is priced. The older
+`detected nuts × avgNutWeightG` formula is **estimate-only** and is not used as a lot total.
+
+### Settings, admin, and market endpoints
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/settings` | Authenticated effective policy (master, visible grades, Gemini enabled/configured, pricing mode, currency) |
+| `GET` | `/api/admin/settings` | Admin-only editable settings, policy, Gemini key status, and market status |
+| `PUT` | `/api/admin/settings/predictions` | Update master, grade, and Gemini advisory switches |
+| `PUT` | `/api/admin/settings/gemini` | Update Gemini model, timeout, retries, and input image maximum |
+| `PUT` | `/api/admin/settings/pricing` | Update mutual-exclusive pricing mode, currency, manual prices, and live market filters |
+| `GET` | `/api/admin/gemini/status` | Admin-only key counts, cooldown state, and non-secret configuration |
+| `GET` | `/api/admin/market/status` | Admin-only market configuration, cache, and stale/error state |
+| `POST` | `/api/admin/market/refresh` | Admin-only forced AGMARKNET refresh |
+| `GET` | `/api/admin/audit` | Admin-only recent settings audit entries |
+| `GET` | `/api/market-prices` | Authenticated active live quote; requires master prediction on and live mode |
+
+Settings updates use optimistic versioning; a concurrent change returns HTTP `409` with a
+reload-and-retry message. All admin routes require the `admin` role. API responses expose
+key counts and state only, never key values.
 
 ### Manual grading endpoints
 
@@ -747,19 +898,30 @@ grade, status, batch code, grading date, review flag, and issue date only.
 
 ## PDF report
 
-`server/utils/pdf.js` produces an A4 AI scan report with:
+`server/utils/pdf.js` produces an A4 AI scan report whose sections follow the active admin
+policy:
 
-- original image,
-- processed model-input preview and annotated detection image,
-- grade composition and model-support notice,
-- defect and measurement sections that say "not supported"/"calibration required" when
-  applicable,
-- every detection in a bounded table,
-- warnings and result summary,
-- page numbers and footer exactly once per page.
+- the original image is retained as evidence even when grading output is hidden;
+- the processed model-input preview and annotated detection image are included only when
+  master prediction is on, and the annotated image is included only when every
+  model-supported grade is enabled (otherwise the boxes would reveal a hidden grade);
+- grade composition, confidence, quality, measurements, defects, detection tables, Gemini
+  advisory, and price sections are included only when their policy permits them;
+- master off embeds only the original image plus a clear policy notice, with no grade,
+  count, percentage, confidence, chart, or price section;
+- images are normalized to upright JPEG before embedding: EXIF orientation is applied,
+  WebP/animated inputs are decoded, transparency is flattened onto white, oversized files
+  are bounded, and the original aspect ratio is preserved instead of stretching;
+- missing or unreadable evidence is shown as an explicit "not available" line, not silently
+  replaced with a different image;
+- every supported detection appears in a bounded table, followed by warnings and a result
+  summary;
+- page numbers and the footer appear exactly once per page.
 
 The footer is drawn inside the bottom margin with the margin temporarily disabled so
-PDFKit does not append blank pages.
+PDFKit does not append blank pages. The comparison PDF uses the same policy gating and
+image normalization rules. PDF tests parse the generated file to assert which image and
+text sections are present.
 
 `server/utils/manualPdf.js` produces the separate manual reports:
 
@@ -769,7 +931,74 @@ PDFKit does not append blank pages.
 - an assessment report with the record summary, QR code, verification URL, and explicit
   "not an accredited certificate" notice.
 
-## Rollback this upgrade
+## Rollback the admin/Gemini/pricing upgrade
+
+There are two rollback levels. Choose the least destructive one that solves the problem.
+
+**1. Behaviour-only rollback (recommended, keeps all history):** in Admin settings, turn
+**Master prediction off** and set pricing to **none**. This immediately removes grading and
+pricing output without deleting stored scans, lots, or manual records. A different admin can
+turn the features back on later.
+
+**2. Code rollback:** stop the API and client first. This feature was added on top of the
+preserved model and earlier uncommitted tuning work, so do not run a blanket
+`git restore .` unless you also want to discard that work. Commit or save a patch of the
+current tree first:
+
+```powershell
+git diff > admin-gemini-pricing-rollback.patch
+git status --short
+```
+
+Then restore only the files you intend to roll back, or use `git revert <commit>` if this
+feature was committed. New feature files are:
+
+```text
+client/src/components/PolicyNotice.jsx
+client/src/context/PolicyContext.jsx
+client/src/pages/AdminSettings.jsx
+server/models/AdminAudit.js
+server/models/MarketPriceCache.js
+server/models/SystemSettings.js
+server/routes/admin.js
+server/routes/marketPrices.js
+server/routes/settings.js
+server/services/geminiService.js
+server/services/marketPriceService.js
+server/services/presentationService.js
+server/services/pricingService.js
+server/services/settingsService.js
+server/tests/unit/policyPricing.test.js
+server/tests/unit/geminiService.test.js
+server/tests/unit/marketPriceService.test.js
+server/tests/unit/pdfPolicy.test.js
+server/tests/integration/policyRoutes.test.js
+```
+
+Also restore the tracked files changed for this feature (`client/src/App.jsx`,
+`client/src/components/Navbar.jsx`, the policy-aware pages, `server/app.js`,
+`server/config.js`, `server/routes/scans.js`, `server/routes/lots.js`,
+`server/services/lotService.js`, `server/services/scanService.js`, `server/utils/pdf.js`,
+models, and `.env.example`) from the pre-feature commit. Do not delete or modify
+`ml_service/weights/best.pt`; verify it afterwards with
+`python scripts\verify_model.py`. The expected checksum remains
+`5E141ABD6BD334E61AA733AA00994B8E5AF4D2104A677BE4A7B7215092883268`.
+
+The feature stores settings in MongoDB. Deleting the singleton document resets policy to the
+defaults (master on, A/B on, C/D off, Gemini off, pricing none); it does **not** delete scans,
+lots, or manual records:
+
+```powershell
+mongosh "mongodb://localhost:27017/arecanut_grading" --eval "db.systemsettings.deleteOne({singleton:'global'})"
+```
+
+Optionally remove the feature's audit/cache collections
+(`db.adminaudits.deleteMany({})`, `db.marketpricecaches.deleteMany({})`). Remove the Gemini
+and data.gov.in key variables from `server\.env` if they are no longer used, then restart the
+API. The React client has no keys to remove. No dataset download, retraining, Docker, or model
+change is involved.
+
+## Rollback the earlier inference tuning upgrade
 
 The model, datasets, authentication, manual grading, and PDF code were not replaced. If you
 need the previous behaviour:
@@ -847,18 +1076,28 @@ npm run build
 cd ..
 ```
 
-The server suite contains 15 unit tests for inference normalisation, validation, summary,
-CSV safety, and search escaping, plus a 17-step HTTP integration workflow covering
-authentication, uploads, duplicate rejection and override, filters, comparison, review,
-corrections, batch unassignment/deletion snapshots, PDF/CSV reports, QR/public
-verification, prices, and activity. The integration workflow uses
-`mongodb-memory-server` and a temporary upload directory, so it does not read or modify the
-application's configured MongoDB database. The MongoDB test binary is cached under
-`server/node_modules/.cache/mongodb-memory-server/` after the first download.
+The server suite currently reports **78/78 passing checks** (`npm test`): **52/52 unit
+tests** and **26/26 integration entries**. The integration entries cover the 17-step manual
+grading workflow plus seven admin-policy scenarios (policy access, C/D/Gemini validation,
+key-status secrecy, grade filtering across result/history/stats/CSV/annotated access,
+measured-weight lot pricing, master-off suppression across API/images/CSV/lots/PDF, and
+audit secrecy). Unit coverage includes inference normalisation, validation, CSV safety,
+search escaping, PDF policy gating, Gemini failover/cooldown/redaction, public AGMARKNET
+name resolution and weighted-average parsing, data.gov.in fallback, cache/stale/error
+redaction, C/D-only lot suppression, and measured-weight pricing.
 
-The Python suite (23 tests) covers tile coverage and edge alignment, duplicate suppression,
-the worker JSON protocol, and the separate X-ray dataset validation. Neither suite loads
-the trained network, so both run quickly and do not require GPU access.
+The integration workflows use `mongodb-memory-server` and a temporary upload directory, so
+they do not read or modify the application's configured MongoDB database. The MongoDB test
+binary is cached under `server/node_modules/.cache/mongodb-memory-server/` after the first
+download. The frontend production build also passes; Vite reports the existing >500 kB
+chunk-size warning.
+
+The Python suite (23/23 tests) covers tile coverage and edge alignment, duplicate
+suppression, the worker JSON protocol, and the separate X-ray dataset validation. Neither
+suite loads the trained network, so both run quickly and do not require GPU access. Automated
+tests mock Gemini and AGMARKNET network calls. A manual smoke test was also run against the
+live Gemini advisory and AGMARKNET public dashboard; those calls are not part of the automated
+suite and may fail when an upstream service is unavailable.
 
 ## Troubleshooting
 
@@ -886,13 +1125,54 @@ the trained network, so both run quickly and do not require GPU access.
   `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 - **Kaggle download fails or times out**: downloads are large; use a long-running
   terminal, or point `--dataset-path` at an existing local copy.
-- **No C/D results**: expected with the bundled model. C/D requires an installed
-  validated four-class checkpoint.
+- **No C/D results**: expected with the bundled model. C/D requires an installed validated
+  four-class checkpoint or a successful Gemini advisory (enabled in Admin settings, with at
+  least one server key). Gemini never creates nut counts.
+- **All grades/counts/prices disappeared**: check **Admin → Admin settings**. Master
+  prediction off intentionally suppresses all output; a disabled grade is removed
+  server-side even though its history remains stored.
+- **Cannot save C/D or master settings**: enabling C/D while master is on requires the
+  Gemini-assisted switch. The loader refuses a policy that would imply an unsupported C/D
+  detector.
+- **Gemini unavailable / keys cooling down**: configure `GEMINI_API_KEY` or
+  `GEMINI_API_KEY_1..10` in `server\.env`, then restart the API. Check
+  `/api/admin/gemini/status` for key counts and cooldown state; key values are intentionally
+  hidden. A quota/rate-limit response cools the key and tries the next one.
+- **Live price is unavailable**: check the state/district/market spelling in Admin settings.
+  The default public AGMARKNET dashboard needs no key. If public access is blocked, set
+  `DATA_GOV_IN_API_KEY` (or `AGMARKNET_API_KEY`) and restart the API to use the optional
+  data.gov.in fallback. A valid source can still return no matching market record; the app
+  reports that rather than inventing a quote. Cached quotes may be shown as stale when a
+  refresh fails.
+- **A lot total is blank even though an average nut weight is set**: weight-based pricing
+  requires `measuredWeightKg` (a measured/calibrated net lot weight). `avgNutWeightG` is
+  estimate-only. Per-nut pricing does not require weight.
+- **Settings save returns `409`**: another admin changed the version first. Reload the Admin
+  page and reapply the change.
+- **PDF is missing annotated/processed images**: this is expected when master prediction is
+  off or a model-supported grade is disabled. The original image remains the evidence.
 
 ## Honest limitations
 
 - The bundled checkpoint detects only Grade A and Grade B. C/D are reported as
   unsupported, not guessed.
+- Gemini-assisted Grade C/D is an image-level advisory, not a validated detector. It cannot
+  produce nut boxes, counts, confidence percentages, or a physically verified grade, and its
+  output can vary between runs. Without a configured key it is unavailable. A local Gemini key
+  is configured only in `server/.env`; the automated tests mock both Gemini and AGMARKNET, while
+  manual smoke tests exercised the live advisory and the keyless public AGMARKNET dashboard.
+- Grade C/D training remains blocked: no inspected dataset has individual-nut A/B/C/D
+  labels. Enabling the C/D switches does not install a C/D model.
+- The bundled model does not measure physical weight. Lot totals use a user-entered measured
+  net weight; mixed per-kg/per-quintal pricing additionally assumes equal average nut weight
+  across counted enabled grades.
+- Live AGMARKNET prices are daily mandi aggregates, not a guaranteed transaction price.
+  Market/variety/grade quoting can be unavailable or stale and may not match a specific
+  seller's lot. Manual prices are administrator inputs, not market observations.
+- Master off and disabled grades are non-destructive display policies; historical values
+  remain in MongoDB and become visible again if the policy is re-enabled.
+- PDF evidence follows the same policy. Disabling a model-supported grade hides the
+  annotated image because its boxes would reveal that grade.
 - No defect model is bundled; defect sections state that detection was not evaluated.
 - Physical millimetre measurements are unavailable without camera calibration; only
   image-space box sizes are shown.
@@ -930,10 +1210,18 @@ the trained network, so both run quickly and do not require GPU access.
 ## Security notes
 
 - Never commit `server/.env`, Kaggle credentials, datasets, uploads, candidates or backups.
+- Gemini and data.gov.in/AGMARKNET keys are server-only environment variables. Do not put
+  them in `client/.env`, Vite variables, screenshots, issues, or logs. The API returns only
+  configured-key counts and cooldown state. The Gemini and market services redact key values
+  from errors, audit summaries, and cached failure messages.
 - Rotate any API key that has been pasted into a terminal, screenshot, issue, or log.
   `scripts/inspect_roboflow.py` reads `ROBOFLOW_API_KEY` from the environment or
   `server/.env` and never writes it to its reports.
+- The admin settings, audit, Gemini status, and market refresh routes require the `admin`
+  role. Settings changes are versioned and audited; audit entries must not contain secrets.
 - Change the example `JWT_SECRET` and admin password before sharing a deployment.
+- Master prediction off is a display safeguard, not encryption or deletion. Anyone with
+  database access can read historical stored values.
 - Passwords are hashed with bcrypt and never logged.
 - The API validates uploaded files by type and size and isolates scans per user.
 - Manual records, images, corrections, price records, and activity are scoped to the

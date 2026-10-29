@@ -41,6 +41,12 @@ const lotSchema = new mongoose.Schema(
       min: 0,
       max: 1000,
     },
+    measuredWeightKg: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 1000000,
+    },
     currency: {
       type: String,
       trim: true,

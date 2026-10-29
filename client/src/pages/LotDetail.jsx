@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import API, { apiErrorMessage, downloadApiFile } from '../api/axios';
 import { useToast } from '../context/ToastContext';
+import { usePolicy } from '../context/PolicyContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import StatCard from '../components/ui/StatCard';
@@ -9,7 +10,8 @@ import Spinner from '../components/ui/Spinner';
 import EmptyState from '../components/ui/EmptyState';
 import Modal from '../components/ui/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
-import { TextField, SelectField } from '../components/ui/Field';
+import PolicyNotice from '../components/PolicyNotice';
+import { TextField } from '../components/ui/Field';
 import { GradeBadge } from '../components/ui/Badge';
 import {
   ArrowRightIcon,
@@ -27,9 +29,9 @@ import {
   formatDateTime,
   formatNumber,
   formatWeightKg,
+  gradeAvailability,
+  pricingStatusText,
 } from '../utils/format';
-
-const GRADE_LETTERS = ['A', 'B', 'C', 'D'];
 
 function EditDetailsModal({ open, lot, onClose, onSaved }) {
   const toast = useToast();
@@ -38,7 +40,6 @@ function EditDetailsModal({ open, lot, onClose, onSaved }) {
     reference: '',
     supplier: '',
     notes: '',
-    currency: 'INR',
   });
   const [saving, setSaving] = useState(false);
 
@@ -49,7 +50,6 @@ function EditDetailsModal({ open, lot, onClose, onSaved }) {
         reference: lot.reference || '',
         supplier: lot.supplier || '',
         notes: lot.notes || '',
-        currency: lot.currency || 'INR',
       });
     }
   }, [lot, open]);
@@ -67,7 +67,6 @@ function EditDetailsModal({ open, lot, onClose, onSaved }) {
         reference: form.reference,
         supplier: form.supplier,
         notes: form.notes,
-        currency: form.currency,
       });
       onSaved(response.data.lot);
       toast.success('Lot details updated.');
@@ -109,19 +108,6 @@ function EditDetailsModal({ open, lot, onClose, onSaved }) {
           maxLength={80}
           onChange={(event) => setForm({ ...form, supplier: event.target.value })}
         />
-        <SelectField
-          id="edit-lot-currency"
-          label="Currency"
-          value={form.currency}
-          onChange={(event) => setForm({ ...form, currency: event.target.value })}
-        >
-          <option value="INR">INR (₹)</option>
-          <option value="USD">USD ($)</option>
-          <option value="EUR">EUR (€)</option>
-          <option value="GBP">GBP (£)</option>
-          <option value="LKR">LKR (Rs)</option>
-          <option value="NPR">NPR (Rs)</option>
-        </SelectField>
         <div>
           <label className="field-label" htmlFor="edit-lot-notes">
             Notes
@@ -152,6 +138,7 @@ export default function LotDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
+  const { policy: contextPolicy } = usePolicy();
 
   const [lot, setLot] = useState(null);
   const [scans, setScans] = useState([]);
@@ -161,11 +148,7 @@ export default function LotDetail() {
 
   const [assumptions, setAssumptions] = useState({
     avgNutWeightG: '',
-    priceA: '',
-    priceB: '',
-    priceC: '',
-    priceD: '',
-    currency: 'INR',
+    measuredWeightKg: '',
   });
   const [savingPrices, setSavingPrices] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -179,11 +162,7 @@ export default function LotDetail() {
     setLot(nextLot);
     setAssumptions({
       avgNutWeightG: nextLot?.avgNutWeightG ?? '',
-      priceA: nextLot?.prices?.A ?? '',
-      priceB: nextLot?.prices?.B ?? '',
-      priceC: nextLot?.prices?.C ?? '',
-      priceD: nextLot?.prices?.D ?? '',
-      currency: nextLot?.currency || 'INR',
+      measuredWeightKg: nextLot?.measuredWeightKg ?? '',
     });
   }, []);
 
@@ -206,16 +185,25 @@ export default function LotDetail() {
   const totals = lot?.totals || { scanCount: 0, totalNuts: 0, gradeCounts: {} };
   const valuation = lot?.valuation;
   const totalNuts = totals.totalNuts || 0;
+  const policy = lot?.policy || contextPolicy;
+  const gradingOn = policy?.masterEnabled !== false;
+  const enabledLetters = gradingOn
+    ? Array.isArray(policy?.enabledLetters)
+      ? policy.enabledLetters
+      : ['A', 'B']
+    : [];
+  const countAvailable = enabledLetters.some(
+    (letter) => !(totals.unavailableGrades || []).includes(letter)
+  );
+  const totalValueAvailable = valuation?.totalValue !== null && valuation?.totalValue !== undefined;
+  const measuredWeight = Number(valuation?.measuredWeightKg) > 0;
 
   const dirty = useMemo(() => {
     if (!lot) return false;
     const number = (value) => Number(value) || 0;
     return (
       number(assumptions.avgNutWeightG) !== number(lot.avgNutWeightG) ||
-      number(assumptions.priceA) !== number(lot.prices?.A) ||
-      number(assumptions.priceB) !== number(lot.prices?.B) ||
-      number(assumptions.priceC) !== number(lot.prices?.C) ||
-      number(assumptions.priceD) !== number(lot.prices?.D)
+      number(assumptions.measuredWeightKg) !== number(lot.measuredWeightKg)
     );
   }, [assumptions, lot]);
 
@@ -226,17 +214,12 @@ export default function LotDetail() {
     try {
       const response = await API.patch(`/lots/${lot.id}`, {
         avgNutWeightG: Number(assumptions.avgNutWeightG) || 0,
-        prices: {
-          A: Number(assumptions.priceA) || 0,
-          B: Number(assumptions.priceB) || 0,
-          C: Number(assumptions.priceC) || 0,
-          D: Number(assumptions.priceD) || 0,
-        },
+        measuredWeightKg: Number(assumptions.measuredWeightKg) || 0,
       });
       applyLot(response.data.lot);
-      toast.success('Valuation assumptions updated.');
+      toast.success('Lot weight updated.');
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'Could not update the valuation.'));
+      toast.error(apiErrorMessage(err, 'Could not update the lot weight.'));
     } finally {
       setSavingPrices(false);
     }
@@ -349,13 +332,16 @@ export default function LotDetail() {
               <span className="pill">{lot.reference || 'Lot'}</span>
               <span className="pill">{formatDateTime(lot.createdAt)}</span>
               {lot.supplier && <span className="pill">{lot.supplier}</span>}
+              <span className="pill">{lot.currency}</span>
             </div>
             <h2 className="mt-3 truncate font-display text-2xl font-semibold text-main sm:text-3xl">
               {lot.name}
             </h2>
             <p className="mt-1 text-sm text-muted">
-              {formatNumber(totals.scanCount)} prediction{totals.scanCount === 1 ? '' : 's'} ·{' '}
-              {formatNumber(totalNuts)} detected nut{totalNuts === 1 ? '' : 's'}
+              {formatNumber(totals.scanCount)} prediction{totals.scanCount === 1 ? '' : 's'}
+              {gradingOn && countAvailable
+                ? ` · ${formatNumber(totalNuts)} enabled nut${totalNuts === 1 ? '' : 's'}`
+                : ' · no enabled per-nut count'}
               {lot.notes ? ` · ${lot.notes}` : ''}
             </p>
           </div>
@@ -366,6 +352,7 @@ export default function LotDetail() {
             <Button
               variant="secondary"
               onClick={() => navigate(`/upload?lot=${lot.id}`)}
+              disabled={!gradingOn}
             >
               <UploadIcon width={16} height={16} /> Add images
             </Button>
@@ -380,6 +367,8 @@ export default function LotDetail() {
         </div>
       </Card>
 
+      <PolicyNotice policy={policy} showPricing />
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Predictions"
@@ -389,28 +378,44 @@ export default function LotDetail() {
         />
         <StatCard
           label="Detected nuts"
-          value={formatNumber(totalNuts)}
-          hint={`A ${formatNumber(totals.gradeCounts?.A || 0)} · B ${formatNumber(
-            totals.gradeCounts?.B || 0
-          )} · C ${formatNumber(totals.gradeCounts?.C || 0)} · D ${formatNumber(
-            totals.gradeCounts?.D || 0
-          )}`}
+          value={gradingOn && countAvailable ? formatNumber(totalNuts) : '—'}
+          hint={
+            gradingOn && countAvailable
+              ? enabledLetters
+                  .filter((letter) => !(totals.unavailableGrades || []).includes(letter))
+                  .map(
+                    (letter) =>
+                      `${letter} ${formatNumber(totals.gradeCounts?.[letter] || 0)}`
+                  )
+                  .join(' · ')
+              : 'No enabled validated per-nut count'
+          }
           tone="a"
         />
         <StatCard
-          label="Estimated weight"
-          value={formatWeightKg(valuation?.totalWeightKg)}
+          label="Measured lot weight"
+          value={measuredWeight ? formatWeightKg(valuation?.measuredWeightKg) : '—'}
           hint={
-            lot.avgNutWeightG > 0
-              ? `${formatNumber(lot.avgNutWeightG)} g average per nut`
-              : 'Set an average nut weight below'
+            measuredWeight
+              ? 'User-entered measured/calibrated net weight'
+              : valuation?.estimatedWeightKg
+              ? `Suggested estimate ${formatWeightKg(valuation.estimatedWeightKg)}; not priced`
+              : 'Record a measured weight below'
           }
           tone="b"
         />
         <StatCard
-          label="Estimated value"
-          value={formatCurrency(valuation?.totalValue, lot.currency)}
-          hint="Counts × average weight × price"
+          label="Measured-weight value"
+          value={
+            gradingOn && totalValueAvailable
+              ? formatCurrency(valuation.totalValue, lot.currency)
+              : 'Not claimed'
+          }
+          hint={
+            gradingOn
+              ? pricingStatusText(valuation)
+              : 'Hidden by grading policy'
+          }
           icon={<CalculatorIcon width={17} height={17} />}
         />
       </div>
@@ -419,10 +424,10 @@ export default function LotDetail() {
         <Card className="p-5 animate-in">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="font-display text-lg font-semibold text-main">Price calculator</h3>
+              <h3 className="font-display text-lg font-semibold text-main">Weight &amp; pricing</h3>
               <p className="mt-1 text-xs text-muted">
-                Values update from the current detected counts. Save to keep the assumptions with
-                this lot.
+                Weight-based pricing uses only a measured net lot weight. The average nut weight is
+                a suggested reference estimate and never creates a lot total.
               </p>
             </div>
             <CalculatorIcon width={20} height={20} />
@@ -430,6 +435,19 @@ export default function LotDetail() {
 
           <form onSubmit={savePrices} className="mt-4 space-y-3">
             <div className="grid gap-3 sm:grid-cols-2">
+              <TextField
+                id="lot-measured-weight"
+                label="Measured net lot weight (kg)"
+                type="number"
+                min="0"
+                max="1000000"
+                step="0.001"
+                value={assumptions.measuredWeightKg}
+                onChange={(event) =>
+                  setAssumptions({ ...assumptions, measuredWeightKg: event.target.value })
+                }
+                hint="Required for per-kg or per-quintal price totals."
+              />
               <TextField
                 id="lot-avg-weight"
                 label="Average nut weight (g)"
@@ -441,119 +459,134 @@ export default function LotDetail() {
                 onChange={(event) =>
                   setAssumptions({ ...assumptions, avgNutWeightG: event.target.value })
                 }
-                hint="User-provided assumption, not measured by the model."
+                hint="Estimate only; not measured by the model."
               />
-              <div className="grid grid-cols-2 gap-2">
-                {GRADE_LETTERS.map((letter) => (
-                  <TextField
-                    key={letter}
-                    id={`lot-price-${letter}`}
-                    label={`Grade ${letter} / kg`}
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={assumptions[`price${letter}`]}
-                    onChange={(event) =>
-                      setAssumptions({
-                        ...assumptions,
-                        [`price${letter}`]: event.target.value,
-                      })
-                    }
-                  />
-                ))}
-              </div>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-[11px] text-muted">
-                Currency: {lot.currency}. Change it from Edit details if needed.
+                Pricing mode: {policy?.pricingMode || 'none'} · currency {lot.currency}.
+                Administrator settings control prices.
               </p>
               <Button type="submit" disabled={!dirty || savingPrices}>
                 {savingPrices ? <Spinner size={15} /> : null}
-                {savingPrices ? 'Saving…' : 'Save assumptions'}
+                {savingPrices ? 'Saving…' : 'Save weights'}
               </Button>
             </div>
           </form>
 
-          <div className="mt-4 overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Grade</th>
-                  <th>Nuts</th>
-                  <th>Est. weight</th>
-                  <th>Est. value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {GRADE_LETTERS.map((letter) => {
-                  const row = valuation?.perGrade?.[letter] || {};
-                  return (
-                    <tr key={letter}>
-                      <td>
-                        <GradeBadge grade={`Grade ${letter}`} />
-                      </td>
-                      <td className="text-sm text-main">{formatNumber(row.count || 0)}</td>
-                      <td className="text-sm text-main">{formatWeightKg(row.weightKg || 0)}</td>
-                      <td className="text-sm font-semibold text-main">
-                        {formatCurrency(row.value || 0, lot.currency)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
           <div className="mt-3 rounded-2xl bg-[color:var(--panel-soft)] p-3 text-[11px] leading-relaxed text-muted">
             <SparkIcon width={14} height={14} className="mr-1 inline" />
-            Estimate only: value = detected nuts × average nut weight (g) ÷ 1000 × price per kg.
-            Physical weight is not measured from the image.
+            {gradingOn
+              ? pricingStatusText(valuation)
+              : 'Grading and pricing output is hidden by the active administrator policy.'}
+            {valuation?.estimatedWeightKg && !measuredWeight
+              ? ` Suggested nut-count weight: ${formatWeightKg(valuation.estimatedWeightKg)}; this is not a priced total.`
+              : ''}
+          </div>
+
+          {gradingOn && enabledLetters.length > 0 && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Grade</th>
+                    <th>Nuts</th>
+                    <th>Weight basis</th>
+                    <th>Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {enabledLetters.map((letter) => {
+                    const row = valuation?.perGrade?.[letter] || {};
+                    const unavailable = (totals.unavailableGrades || []).includes(letter);
+                    return (
+                      <tr key={letter}>
+                        <td>
+                          <GradeBadge grade={`Grade ${letter}`} />
+                        </td>
+                        <td className="text-sm text-main">
+                          {unavailable ? 'Not counted' : formatNumber(row.count || 0)}
+                        </td>
+                        <td className="text-sm text-main">
+                          {row.weightKg === null || row.weightKg === undefined
+                            ? 'Needs measured weight'
+                            : `${formatWeightKg(row.weightKg)} allocated`}
+                        </td>
+                        <td className="text-sm font-semibold text-main">
+                          {row.value === null || row.value === undefined
+                            ? 'Not claimed'
+                            : formatCurrency(row.value, lot.currency)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {gradingOn && enabledLetters.length === 0 && (
+            <p className="mt-4 text-sm text-muted">No grade is enabled by the active policy.</p>
+          )}
+
+          <div className="mt-3 rounded-2xl bg-[color:var(--panel-soft)] p-3 text-[11px] leading-relaxed text-muted">
+            Per-grade weight is allocated from measured lot weight by enabled nut count; it is not
+            a separate physical measurement. Per-nut prices can be calculated from counts alone.
           </div>
         </Card>
 
-        <Card className="p-5 animate-in">
-          <h3 className="font-display text-lg font-semibold text-main">Composition</h3>
-          <p className="mt-1 text-xs text-muted">Share of detected nuts by model grade.</p>
-          <div className="mt-4 space-y-3">
-            {GRADE_LETTERS.map((letter) => {
-              const count = totals.gradeCounts?.[letter] || 0;
-              const pct = totalNuts ? (count / totalNuts) * 100 : 0;
-              const colors = {
-                A: 'var(--accent)',
-                B: 'var(--gold)',
-                C: '#c77a2e',
-                D: '#b44242',
-              };
-              return (
-                <div key={letter}>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-main">Grade {letter}</span>
-                    <span className="text-muted">
-                      {formatNumber(count)} · {pct.toFixed(1)}%
-                    </span>
+        {gradingOn && (
+          <Card className="p-5 animate-in">
+            <h3 className="font-display text-lg font-semibold text-main">Composition</h3>
+            <p className="mt-1 text-xs text-muted">Share of counted nuts by enabled model grade.</p>
+            <div className="mt-4 space-y-3">
+              {enabledLetters.map((letter) => {
+                const unavailable = (totals.unavailableGrades || []).includes(letter);
+                const count = totals.gradeCounts?.[letter] || 0;
+                const pct = !unavailable && totalNuts ? (count / totalNuts) * 100 : 0;
+                const colors = {
+                  A: 'var(--accent)',
+                  B: 'var(--gold)',
+                  C: '#c77a2e',
+                  D: '#b44242',
+                };
+                return (
+                  <div key={letter}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-main">Grade {letter}</span>
+                      <span className="text-muted">
+                        {unavailable
+                          ? 'no validated count'
+                          : `${formatNumber(count)} · ${pct.toFixed(1)}%`}
+                      </span>
+                    </div>
+                    <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[color:var(--border)]">
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${Math.max(0, Math.min(100, pct))}%`,
+                          background: colors[letter],
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[color:var(--border)]">
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: colors[letter] }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <p className="mt-4 text-[11px] leading-relaxed text-muted">
-            The bundled checkpoint evaluates Grade A and Grade B. Grade C/D counts remain zero
-            until a four-class model is installed; they are not inferred from A/B results.
-          </p>
-          {totals.scanCount === 0 && (
-            <div className="mt-4">
-              <Button onClick={() => navigate(`/upload?lot=${lot.id}`)}>
-                <UploadIcon width={16} height={16} /> Add the first images
-              </Button>
+                );
+              })}
             </div>
-          )}
-        </Card>
+            <p className="mt-4 text-[11px] leading-relaxed text-muted">
+              Only enabled classes with a validated detector are counted. Grade C/D remain
+              uncounted unless a four-class detector is installed; Gemini advisories never create
+              counts, boxes, confidence, or percentages.
+            </p>
+            {totals.scanCount === 0 && (
+              <div className="mt-4">
+                <Button onClick={() => navigate(`/upload?lot=${lot.id}`)}>
+                  <UploadIcon width={16} height={16} /> Add the first images
+                </Button>
+              </div>
+            )}
+          </Card>
+        )}
       </div>
 
       <Card className="overflow-hidden">
@@ -564,7 +597,12 @@ export default function LotDetail() {
               {formatNumber(totals.scanCount || 0)} record{totals.scanCount === 1 ? '' : 's'}
             </p>
           </div>
-          <Button size="sm" variant="secondary" onClick={() => navigate(`/upload?lot=${lot.id}`)}>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => navigate(`/upload?lot=${lot.id}`)}
+            disabled={!gradingOn}
+          >
             <UploadIcon width={15} height={15} /> Add images
           </Button>
         </div>
@@ -573,10 +611,18 @@ export default function LotDetail() {
           <EmptyState
             icon="🖼️"
             title="No predictions in this lot yet"
-            description="Upload one or more tray images and choose this lot to attach them here."
+            description={
+              gradingOn
+                ? 'Upload one or more tray images and choose this lot to attach them here.'
+                : 'New predictions are disabled by the active master prediction policy.'
+            }
             action={
-              <Button onClick={() => navigate(`/upload?lot=${lot.id}`)}>
-                <UploadIcon width={16} height={16} /> Batch upload
+              <Button
+                onClick={() => navigate(`/upload?lot=${lot.id}`)}
+                disabled={!gradingOn}
+              >
+                <UploadIcon width={16} height={16} />{' '}
+                {gradingOn ? 'Batch upload' : 'Grading disabled'}
               </Button>
             }
           />
@@ -586,29 +632,15 @@ export default function LotDetail() {
               <thead>
                 <tr>
                   <th>Report</th>
-                  <th>Grade</th>
-                  <th>A / B / C / D</th>
-                  <th>Nuts</th>
-                  <th>Est. value</th>
+                  {gradingOn && <th>Grade</th>}
+                  {gradingOn && <th>{enabledLetters.join(' / ')}</th>}
+                  {gradingOn && <th>Counted nuts</th>}
                   <th>Date</th>
                   <th aria-label="Actions" />
                 </tr>
               </thead>
               <tbody>
                 {scans.map((scan) => {
-                  const weightG = Number(lot.avgNutWeightG) || 0;
-                  const estimatedValue =
-                    weightG > 0
-                      ? (GRADE_LETTERS.reduce(
-                          (sum, letter) =>
-                            sum +
-                            (Number(scan[`grade${letter}`]) || 0) *
-                              (Number(lot.prices?.[letter]) || 0),
-                          0
-                        ) *
-                          weightG) /
-                        1000
-                      : 0;
                   return (
                     <tr key={scan.id}>
                       <td>
@@ -621,16 +653,45 @@ export default function LotDetail() {
                           </span>
                         </Link>
                       </td>
-                      <td>
-                        <GradeBadge grade={scan.finalGrade} />
-                      </td>
-                      <td className="whitespace-nowrap text-xs">
-                        {scan.gradeA} / {scan.gradeB} / {scan.gradeC} / {scan.gradeD}
-                      </td>
-                      <td className="text-sm text-main">{formatNumber(scan.totalCount)}</td>
-                      <td className="text-sm text-main">
-                        {formatCurrency(estimatedValue, lot.currency)}
-                      </td>
+                      {gradingOn && (
+                        <td>
+                          <GradeBadge grade={scan.finalGrade} />
+                          {scan.finalGradeSource === 'gemini_advisory' && (
+                            <span className="ml-1 text-[10px] text-muted">advisory</span>
+                          )}
+                        </td>
+                      )}
+                      {gradingOn && (
+                        <td className="whitespace-nowrap text-xs">
+                          {enabledLetters.map((letter, index) => {
+                            const availability = gradeAvailability(scan, letter);
+                            return (
+                              <span key={letter}>
+                                {index > 0 && ' / '}
+                                <span
+                                  className="font-bold"
+                                  title={
+                                    availability.supported
+                                      ? undefined
+                                      : availability.reason || 'No validated detector'
+                                  }
+                                >
+                                  {availability.supported
+                                    ? formatNumber(
+                                        availability.count ?? scan[`grade${letter}`] ?? 0
+                                      )
+                                    : '—'}
+                                </span>
+                              </span>
+                            );
+                          })}
+                        </td>
+                      )}
+                      {gradingOn && (
+                        <td className="text-sm text-main">
+                          {countAvailable ? formatNumber(scan.totalCount) : '—'}
+                        </td>
+                      )}
                       <td className="whitespace-nowrap text-xs text-muted">
                         {formatDateTime(scan.createdAt)}
                       </td>

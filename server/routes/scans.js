@@ -34,6 +34,19 @@ const {
 } = require('../services/scanService');
 const { getLotMap } = require('../services/lotService');
 const { buildPredictionReport, buildComparisonReport } = require('../utils/pdf');
+const {
+  getSettings,
+  applyScanPolicy,
+  settingsSnapshot,
+  buildPolicy,
+  isAnnotatedImageAllowed,
+} = require('../services/settingsService');
+const {
+  presentScan,
+  presentScans,
+  resolveLivePrice,
+} = require('../services/presentationService');
+const { analyzeImage } = require('../services/geminiService');
 
 const router = express.Router();
 
@@ -72,6 +85,77 @@ function normalizeGrade(value) {
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function gradeLetterFromValue(value) {
+  const normalized = normalizeGrade(value);
+  const match = String(normalized || '').match(/grade\s*([abcd])/i);
+  return match ? match[1].toUpperCase() : normalized === 'Invalid' ? 'Invalid' : null;
+}
+
+function gradeFilterError(query, policy) {
+  if (!query.grade) return null;
+  const letter = gradeLetterFromValue(query.grade);
+  if (!letter) return null;
+  if (!policy.masterEnabled) {
+    return 'Grade filtering is unavailable while master prediction is disabled.';
+  }
+  if (letter !== 'Invalid' && !policy.enabledLetters.includes(letter)) {
+    return `Grade ${letter} is disabled by the active display policy.`;
+  }
+  return null;
+}
+
+function gradeLetterForFinalGrade(value) {
+  return gradeLetterFromValue(value);
+}
+
+async function runGeminiAdvisory({ uploadedPath, settings, inference, policy }) {
+  const needsAdvisory = policy.enabledLetters.some((letter) => ['C', 'D'].includes(letter));
+  if (!needsAdvisory) return null;
+  if (!policy.geminiEnabled) {
+    return {
+      status: 'unavailable',
+      advisoryOnly: true,
+      gradeHint: null,
+      evidence: [],
+      limitations: [
+        'Gemini-assisted review is disabled or unavailable, so Grade C/D visual review cannot run.',
+      ],
+      note:
+        'Grade C/D cannot be counted without a validated detector. No grade was invented.',
+    };
+  }
+  try {
+    const buffer = fs.readFileSync(uploadedPath);
+    const contextCounts = {};
+    ['A', 'B'].forEach((letter) => {
+      if (policy.enabledLetters.includes(letter)) {
+        contextCounts[`Grade${letter}`] = inference[`grade${letter}`];
+      }
+    });
+    const result = await analyzeImage(buffer, {
+      settings,
+      context: {
+        supportedGrades: inference.supportedGrades.filter((letter) =>
+          policy.enabledLetters.includes(letter)
+        ),
+        counts: contextCounts,
+      },
+    });
+    return result;
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      advisoryOnly: true,
+      gradeHint: null,
+      evidence: [],
+      limitations: [error.message],
+      note:
+        'Gemini-assisted Grade C/D review failed. No Grade C/D count or grade was invented.',
+      errorCode: error.code || 'gemini_unavailable',
+    };
+  }
 }
 
 function buildFilter(userId, query = {}) {
@@ -154,6 +238,17 @@ router.post(
       return res.status(400).json({ error: 'No image uploaded' });
     }
 
+    const settings = await getSettings({ fresh: true });
+    const policy = buildPolicy(settings);
+    if (!policy.masterEnabled) {
+      removeTempFile(req.file.path);
+      return res.status(403).json({
+        error:
+          'Master prediction is switched off by the administrator. No grade, count, confidence, chart, or price was generated.',
+        policy,
+      });
+    }
+
     let lotId = req.body?.lotId || req.body?.lot || null;
     if (lotId && !mongoose.Types.ObjectId.isValid(lotId)) {
       removeTempFile(req.file.path);
@@ -180,6 +275,49 @@ router.post(
     } catch (error) {
       removeTempFile(uploadedPath);
       throw error;
+    }
+
+    const advisory = await runGeminiAdvisory({
+      uploadedPath,
+      settings,
+      inference,
+      policy,
+    });
+
+    const enabledAb = policy.enabledLetters.filter(
+      (letter) =>
+        ['A', 'B'].includes(letter) && inference.supportedGrades.includes(letter)
+    );
+    const onlyAdvisoryGrades =
+      policy.enabledLetters.length > 0 &&
+      enabledAb.length === 0 &&
+      policy.enabledLetters.some((letter) => ['C', 'D'].includes(letter));
+
+    if (onlyAdvisoryGrades && (!advisory || advisory.status !== 'ok')) {
+      removeTempFile(uploadedPath);
+      return res.status(503).json({
+        error:
+          (advisory && advisory.limitations && advisory.limitations[0]) ||
+          'Only Grade C/D is enabled, but Gemini-assisted review is unavailable. No grade or count was invented.',
+        geminiAdvisory: advisory,
+        policy,
+      });
+    }
+
+    let finalGrade = inference.finalGrade;
+    let finalGradeSource = 'model';
+    if (onlyAdvisoryGrades) {
+      if (
+        advisory &&
+        advisory.status === 'ok' &&
+        ['Grade C', 'Grade D'].includes(advisory.gradeHint)
+      ) {
+        finalGrade = advisory.gradeHint;
+        finalGradeSource = 'gemini_advisory';
+      } else {
+        finalGrade = 'Invalid';
+        finalGradeSource = 'none';
+      }
     }
 
     let annotatedImage = null;
@@ -215,11 +353,14 @@ router.post(
         gradeD: inference.gradeD,
         supportedGrades: inference.supportedGrades,
         totalCount: inference.total,
-        finalGrade: inference.finalGrade,
-        confidence: inference.confidence,
-        qualityScore: inference.qualityScore,
+        finalGrade,
+        finalGradeSource,
+        confidence: finalGradeSource === 'gemini_advisory' ? null : inference.confidence,
+        qualityScore: finalGradeSource === 'gemini_advisory' ? null : inference.qualityScore,
         qualityMethod: inference.qualityMethod,
         confidenceMethod: inference.confidenceMethod,
+        geminiAdvisory: advisory,
+        settingsSnapshot: settingsSnapshot(settings),
         detections: inference.detections,
         measurements: inference.measurements,
         defects: inference.defects,
@@ -234,22 +375,32 @@ router.post(
         user: req.user._id,
       });
 
-      const payload = serializeScan(scan);
+      const view = await presentScan(scan, settings, {
+        includeDetections: true,
+        includePricing: true,
+        weightKg: req.body?.weightKg,
+      });
       return res.status(201).json({
         success: true,
         scanId: scan._id,
         reportId: scan.reportId,
-        // Legacy fields kept for clients that still read the original shape.
-        gradeA: inference.gradeA,
-        gradeB: inference.gradeB,
-        gradeC: inference.gradeC,
-        gradeD: inference.gradeD,
-        supportedGrades: inference.supportedGrades,
-        totalCount: inference.total,
-        finalGrade: inference.finalGrade,
+        // Legacy fields are filtered by the same active policy as `scan`.
+        gradeA: view.gradeA,
+        gradeB: view.gradeB,
+        gradeC: view.gradeC,
+        gradeD: view.gradeD,
+        gradeCounts: view.gradeCounts,
+        supportedGrades: view.supportedGrades,
+        unavailableGrades: view.unavailableGrades,
+        totalCount: view.totalCount,
+        finalGrade: view.finalGrade,
+        finalGradeSource: view.finalGradeSource,
+        geminiAdvisory: view.geminiAdvisory,
+        pricing: view.pricing,
+        policy: view.predictionPolicy,
         annotatedImage: null,
         isBase64: false,
-        scan: payload,
+        scan: view,
       });
     } catch (error) {
       // Do not leave orphaned files if persistence fails.
@@ -274,6 +425,11 @@ router.get(
   '/history',
   protect,
   asyncHandler(async (req, res) => {
+    const settings = await getSettings();
+    const policy = buildPolicy(settings);
+    const filterError = gradeFilterError(req.query, policy);
+    if (filterError) return res.status(400).json({ error: filterError });
+
     const { page, limit, skip } = parsePagination(req.query, { limit: 10 });
     const filter = buildFilter(req.user._id, req.query);
 
@@ -282,7 +438,7 @@ router.get(
         .sort(sortOption(req.query.sort))
         .skip(skip)
         .limit(limit)
-        .select('-annotatedImage -detections -defects'),
+        .select('-annotatedImage -defects'),
       Scan.countDocuments(filter),
       Scan.aggregate([
         { $match: filter },
@@ -292,40 +448,65 @@ router.get(
             count: { $sum: 1 },
             avgQuality: { $avg: '$qualityScore' },
             nuts: { $sum: '$totalCount' },
+            gradeASum: { $sum: '$gradeA' },
+            gradeBSum: { $sum: '$gradeB' },
+            gradeCSum: { $sum: '$gradeC' },
+            gradeDSum: { $sum: '$gradeD' },
           },
         },
       ]),
     ]);
 
+    const views = await presentScans(items, settings, {
+      includeDetections: false,
+      includePricing: true,
+    });
+
     const summary = {
+      gradingEnabled: policy.masterEnabled,
       total: summaryRows.reduce((sum, row) => sum + row.count, 0),
-      gradeA: 0,
-      gradeB: 0,
-      gradeC: 0,
-      gradeD: 0,
       invalid: 0,
-      totalNuts: summaryRows.reduce((sum, row) => sum + (row.nuts || 0), 0),
+      totalNuts: null,
       avgQualityScore: null,
+      gradeAvailability: {},
     };
     let qualityWeight = 0;
+    const gradeSums = { A: 0, B: 0, C: 0, D: 0 };
+
     summaryRows.forEach((row) => {
-      if (row._id === 'Grade A') summary.gradeA = row.count;
-      else if (row._id === 'Grade B') summary.gradeB = row.count;
-      else if (row._id === 'Grade C') summary.gradeC = row.count;
-      else if (row._id === 'Grade D') summary.gradeD = row.count;
-      else summary.invalid += row.count;
-      if (typeof row.avgQuality === 'number') {
+      gradeSums.A += Number(row.gradeASum) || 0;
+      gradeSums.B += Number(row.gradeBSum) || 0;
+      gradeSums.C += Number(row.gradeCSum) || 0;
+      gradeSums.D += Number(row.gradeDSum) || 0;
+      if (row._id === 'Invalid' && policy.masterEnabled) summary.invalid += row.count;
+      if (typeof row.avgQuality === 'number' && policy.masterEnabled) {
         summary.avgQualityScore =
           (summary.avgQualityScore || 0) + row.avgQuality * row.count;
         qualityWeight += row.count;
       }
     });
+
+    if (policy.masterEnabled) {
+      summary.totalNuts = 0;
+      policy.enabledLetters.forEach((letter) => {
+        const supported = ['A', 'B'].includes(letter);
+        summary[`grade${letter}`] = supported ? Math.round(gradeSums[letter]) : 0;
+        summary.gradeAvailability[letter] = {
+          supported,
+          count: supported ? Math.round(gradeSums[letter]) : null,
+          reason: supported
+            ? null
+            : 'No validated Grade C/D detector is installed; Gemini advisory does not create counts.',
+        };
+        if (supported) summary.totalNuts += gradeSums[letter];
+      });
+    }
     if (qualityWeight > 0) {
       summary.avgQualityScore = Math.round((summary.avgQualityScore / qualityWeight) * 10) / 10;
     }
 
     return res.json({
-      items: items.map((scan) => serializeScan(scan, { includeDetections: false })),
+      items: views,
       pagination: {
         page,
         limit,
@@ -335,6 +516,7 @@ router.get(
         hasPrev: page > 1,
       },
       summary,
+      policy,
       filters: {
         grade: normalizeGrade(req.query.grade),
         from: req.query.from || null,
@@ -352,6 +534,11 @@ router.get(
   '/export.csv',
   protect,
   asyncHandler(async (req, res) => {
+    const settings = await getSettings();
+    const policy = buildPolicy(settings);
+    const filterError = gradeFilterError(req.query, policy);
+    if (filterError) return res.status(400).json({ error: filterError });
+
     const MAX_ROWS = 5000;
     const filter = buildFilter(req.user._id, req.query);
     const [total, scans] = await Promise.all([
@@ -359,8 +546,11 @@ router.get(
       Scan.find(filter)
         .sort(sortOption(req.query.sort))
         .limit(MAX_ROWS)
-        .select('-annotatedImage -detections -defects'),
+        .select('-annotatedImage -defects'),
     ]);
+    const views = scans.map((scan) =>
+      applyScanPolicy(serializeScan(scan, { includeDetections: false }), settings)
+    );
 
     const lotIds = [...new Set(scans.filter((scan) => scan.lot).map((scan) => String(scan.lot)))];
     const lots = lotIds.length
@@ -369,21 +559,20 @@ router.get(
     const lotMap = getLotMap(lots);
 
     const summary = {
-      gradeA: 0,
-      gradeB: 0,
-      gradeC: 0,
-      gradeD: 0,
       invalid: 0,
-      nuts: 0,
+      nuts: policy.masterEnabled ? 0 : null,
     };
-    scans.forEach((scan) => {
-      const count = Number(scan.totalCount) || 0;
-      summary.nuts += count;
-      if (scan.finalGrade === 'Grade A') summary.gradeA += 1;
-      else if (scan.finalGrade === 'Grade B') summary.gradeB += 1;
-      else if (scan.finalGrade === 'Grade C') summary.gradeC += 1;
-      else if (scan.finalGrade === 'Grade D') summary.gradeD += 1;
-      else summary.invalid += 1;
+    views.forEach((view) => {
+      if (policy.masterEnabled) {
+        summary.nuts += Number(view.totalCount) || 0;
+        if (view.finalGradeSource === 'hidden_by_policy') return;
+        const letter = gradeLetterForFinalGrade(view.finalGrade);
+        if (letter && policy.enabledLetters.includes(letter)) {
+          summary[`grade${letter}`] = (summary[`grade${letter}`] || 0) + 1;
+        } else if (!letter) {
+          summary.invalid += 1;
+        }
+      }
     });
 
     const filterParts = [];
@@ -397,63 +586,74 @@ router.get(
     lines.push('\ufeffArecanut prediction export');
     lines.push(`Generated at,${csvCell(new Date().toISOString())}`);
     lines.push(`Filters,${csvCell(filterParts.length ? filterParts.join('; ') : 'none')}`);
+    lines.push(`Policy version,${policy.version}`);
+    lines.push(
+      `Master prediction,${policy.masterEnabled ? 'on' : 'off'}`
+    );
+    lines.push(
+      `Enabled grades,${policy.enabledLetters.length ? policy.enabledLetters.join('') : 'none'}`
+    );
+    lines.push(`Pricing mode,${policy.pricingMode}`);
     lines.push(`Matching predictions,${total}`);
     lines.push(`Rows exported,${scans.length}`);
-    lines.push(`Total detected nuts,${summary.nuts}`);
-    lines.push(`Majority Grade A,${summary.gradeA}`);
-    lines.push(`Majority Grade B,${summary.gradeB}`);
-    lines.push(`Majority Grade C,${summary.gradeC}`);
-    lines.push(`Majority Grade D,${summary.gradeD}`);
-    lines.push(`Invalid / no detections,${summary.invalid}`);
+    if (policy.masterEnabled) {
+      lines.push(`Total enabled nuts,${summary.nuts}`);
+      policy.enabledLetters.forEach((letter) => {
+        lines.push(`Majority Grade ${letter},${summary[`grade${letter}`] || 0}`);
+      });
+      lines.push(`Invalid / no enabled grade,${summary.invalid}`);
+    } else {
+      lines.push(
+        'Grade columns,hidden by administrator policy; historical records remain stored and are filtered non-destructively'
+      );
+    }
     if (total > scans.length) {
       lines.push(`Note,Export limited to the most recent ${MAX_ROWS} matching predictions`);
     }
     lines.push('');
-    lines.push(
-      [
-        'Report ID',
-        'Scan ID',
-        'Filename',
-        'Created at',
-        'Final grade',
-        'Grade A',
-        'Grade B',
-        'Grade C',
-        'Grade D',
-        'Total count',
-        'Confidence',
-        'Quality score',
-        'Model version',
-        'Lot',
-        'Lot reference',
-      ]
-        .map(csvCell)
-        .join(',')
-    );
 
-    scans.forEach((scan) => {
+    const header = [
+      'Report ID',
+      'Scan ID',
+      'Filename',
+      'Created at',
+      ...(policy.masterEnabled ? ['Final grade'] : []),
+      ...(policy.masterEnabled
+        ? policy.enabledLetters.map((letter) => `Grade ${letter}`)
+        : []),
+      ...(policy.masterEnabled ? ['Total enabled count', 'Confidence', 'Quality score'] : []),
+      'Model version',
+      'Lot',
+      'Lot reference',
+    ];
+    lines.push(header.map(csvCell).join(','));
+
+    views.forEach((view, index) => {
+      const scan = scans[index];
       const lot = scan.lot ? lotMap.get(String(scan.lot)) : null;
-      lines.push(
-        [
-          scan.reportId || '',
-          String(scan._id),
-          scan.filename || '',
-          scan.createdAt ? scan.createdAt.toISOString() : '',
-          scan.finalGrade || '',
-          scan.gradeA || 0,
-          scan.gradeB || 0,
-          scan.gradeC || 0,
-          scan.gradeD || 0,
-          scan.totalCount || 0,
-          scan.confidence ?? '',
-          scan.qualityScore ?? '',
-          scan.modelVersion || '',
-          lot?.name || '',
-          lot?.reference || '',
-        ]
-          .map(csvCell)
-          .join(',')
-      );
+      const row = [
+        scan.reportId || '',
+        String(scan._id),
+        scan.filename || '',
+        scan.createdAt ? scan.createdAt.toISOString() : '',
+        ...(policy.masterEnabled
+          ? [
+              view.finalGradeSource === 'hidden_by_policy'
+                ? ''
+                : view.finalGrade || 'Invalid',
+            ]
+          : []),
+        ...(policy.masterEnabled
+          ? policy.enabledLetters.map((letter) => view.gradeCounts?.[letter] ?? '')
+          : []),
+        ...(policy.masterEnabled
+          ? [view.totalCount ?? '', view.confidence ?? '', view.qualityScore ?? '']
+          : []),
+        scan.modelVersion || '',
+        lot?.name || '',
+        lot?.reference || '',
+      ];
+      lines.push(row.map(csvCell).join(','));
     });
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -471,6 +671,11 @@ router.get(
   '/stats',
   protect,
   asyncHandler(async (req, res) => {
+    const settings = await getSettings();
+    const policy = buildPolicy(settings);
+    const filterError = gradeFilterError(req.query, policy);
+    if (filterError) return res.status(400).json({ error: filterError });
+
     const userId = new mongoose.Types.ObjectId(req.user._id);
     const filter = buildFilter(userId, req.query);
     const activityDays = Math.min(
@@ -492,6 +697,10 @@ router.get(
             nuts: { $sum: '$totalCount' },
             avgQuality: { $avg: '$qualityScore' },
             avgConfidence: { $avg: '$confidence' },
+            gradeASum: { $sum: '$gradeA' },
+            gradeBSum: { $sum: '$gradeB' },
+            gradeCSum: { $sum: '$gradeC' },
+            gradeDSum: { $sum: '$gradeD' },
           },
         },
       ]),
@@ -520,21 +729,24 @@ router.get(
       Invalid: 0,
     };
     let total = 0;
-    let nuts = 0;
     let qualitySum = 0;
     let qualityWeight = 0;
     let confidenceSum = 0;
     let confidenceWeight = 0;
+    const gradeSums = { A: 0, B: 0, C: 0, D: 0 };
 
     groups.forEach((group) => {
       counts[group._id] = (counts[group._id] || 0) + group.count;
       total += group.count;
-      nuts += group.nuts || 0;
-      if (typeof group.avgQuality === 'number') {
+      gradeSums.A += Number(group.gradeASum) || 0;
+      gradeSums.B += Number(group.gradeBSum) || 0;
+      gradeSums.C += Number(group.gradeCSum) || 0;
+      gradeSums.D += Number(group.gradeDSum) || 0;
+      if (typeof group.avgQuality === 'number' && policy.masterEnabled) {
         qualitySum += group.avgQuality * group.count;
         qualityWeight += group.count;
       }
-      if (typeof group.avgConfidence === 'number') {
+      if (typeof group.avgConfidence === 'number' && policy.masterEnabled) {
         confidenceSum += group.avgConfidence * group.count;
         confidenceWeight += group.count;
       }
@@ -549,31 +761,48 @@ router.get(
       series.push({ date: key, count: activityMap.get(key) || 0 });
     }
 
+    const totals = {
+      predictions: total,
+      detections: null,
+      avgQualityScore: null,
+      avgConfidence: null,
+    };
+    let gradeDistribution = [];
+    if (policy.masterEnabled) {
+      totals.detections = 0;
+      policy.enabledLetters.forEach((letter) => {
+        const supported = ['A', 'B'].includes(letter);
+        const value = supported ? Math.round(gradeSums[letter]) : 0;
+        totals[`grade${letter}`] = value;
+        totals[`grade${letter}Supported`] = supported;
+        if (supported) totals.detections += value;
+        gradeDistribution.push({
+          grade: `Grade ${letter}`,
+          count: value,
+          supported,
+          reason: supported
+            ? null
+            : 'No validated Grade C/D detector; Gemini advisory is not a count.',
+        });
+      });
+      totals.invalid = counts.Invalid || 0;
+      totals.avgQualityScore =
+        qualityWeight > 0 ? Math.round((qualitySum / qualityWeight) * 10) / 10 : null;
+      totals.avgConfidence =
+        confidenceWeight > 0
+          ? Math.round((confidenceSum / confidenceWeight) * 10) / 10
+          : null;
+    }
+
     return res.json({
-      totals: {
-        predictions: total,
-        detections: nuts,
-        gradeA: counts['Grade A'] || 0,
-        gradeB: counts['Grade B'] || 0,
-        gradeC: counts['Grade C'] || 0,
-        gradeD: counts['Grade D'] || 0,
-        invalid: counts.Invalid || 0,
-        avgQualityScore:
-          qualityWeight > 0 ? Math.round((qualitySum / qualityWeight) * 10) / 10 : null,
-        avgConfidence:
-          confidenceWeight > 0
-            ? Math.round((confidenceSum / confidenceWeight) * 10) / 10
-            : null,
-      },
-      gradeDistribution: [
-        { grade: 'Grade A', count: counts['Grade A'] || 0 },
-        { grade: 'Grade B', count: counts['Grade B'] || 0 },
-        { grade: 'Grade C', count: counts['Grade C'] || 0 },
-        { grade: 'Grade D', count: counts['Grade D'] || 0 },
-        { grade: 'Invalid', count: counts.Invalid || 0 },
-      ],
+      totals,
+      gradeDistribution,
       activity: series,
-      recent: recent.map((scan) => serializeScan(scan, { includeDetections: false })),
+      recent: await presentScans(recent, settings, {
+        includeDetections: false,
+        includePricing: true,
+      }),
+      policy,
       model: modelStatus,
       generatedAt: new Date().toISOString(),
     });
@@ -673,8 +902,14 @@ router.get(
       return res.status(404).json({ error: 'Both predictions must exist and belong to you' });
     }
     const ordered = ids.map((id) => scans.find((scan) => String(scan._id) === id));
+    const settings = await getSettings();
+    const views = await presentScans(ordered, settings, {
+      includeDetections: true,
+      includePricing: true,
+    });
     return res.json({
-      scans: ordered.map((scan) => serializeScan(scan)),
+      scans: views,
+      policy: buildPolicy(settings),
       caveat:
         'Comparison does not imply that the same physical nut was tracked across images.',
     });
@@ -699,8 +934,15 @@ router.get(
       return res.status(404).json({ error: 'Both predictions must exist and belong to you' });
     }
     const ordered = ids.map((id) => scans.find((scan) => String(scan._id) === id));
+    const settings = await getSettings();
+    const views = await presentScans(ordered, settings, {
+      includeDetections: true,
+      includePricing: true,
+    });
     const images = await Promise.all(ordered.map((scan) => loadReportImages(scan)));
-    const buffer = await buildComparisonReport(ordered, images);
+    const buffer = await buildComparisonReport(views, images, {
+      policy: buildPolicy(settings),
+    });
     return sendPdf(res, buffer, `arecanut-comparison-${Date.now()}.pdf`);
   })
 );
@@ -715,7 +957,13 @@ router.get(
     }
     const scan = await Scan.findOne({ _id: req.params.id, user: req.user._id });
     if (!scan) return res.status(404).json({ error: 'Prediction not found' });
-    return res.json({ scan: serializeScan(scan) });
+    const settings = await getSettings();
+    const view = await presentScan(scan, settings, {
+      includeDetections: true,
+      includePricing: true,
+      weightKg: req.query.weightKg,
+    });
+    return res.json({ scan: view, policy: buildPolicy(settings) });
   })
 );
 
@@ -733,6 +981,25 @@ router.get(
     }
     const scan = await Scan.findOne({ _id: req.params.id, user: req.user._id });
     if (!scan) return res.status(404).json({ error: 'Prediction not found' });
+
+    if (kind !== 'original') {
+      const settings = await getSettings();
+      const policy = buildPolicy(settings);
+      if (!policy.masterEnabled) {
+        return res.status(403).json({
+          error:
+            'Processed and annotated model-output images are unavailable while master prediction is disabled.',
+          policy,
+        });
+      }
+      if (kind === 'annotated' && !isAnnotatedImageAllowed(scan, policy)) {
+        return res.status(403).json({
+          error:
+            'The annotated image contains boxes for a grade that is disabled by the active display policy.',
+          policy,
+        });
+      }
+    }
 
     const image = loadScanImage(scan, kind);
     if (!image) return res.status(404).json({ error: 'Image not available' });
@@ -754,8 +1021,16 @@ router.get(
     const scan = await Scan.findOne({ _id: req.params.id, user: req.user._id });
     if (!scan) return res.status(404).json({ error: 'Prediction not found' });
 
+    const settings = await getSettings();
+    const view = await presentScan(scan, settings, {
+      includeDetections: true,
+      includePricing: true,
+      weightKg: req.query.weightKg,
+    });
     const images = await loadReportImages(scan);
-    const buffer = await buildPredictionReport(scan, images);
+    const buffer = await buildPredictionReport(view, images, {
+      policy: buildPolicy(settings),
+    });
     return sendPdf(res, buffer, `arecanut-report-${scan.reportId || scan._id}.pdf`);
   })
 );

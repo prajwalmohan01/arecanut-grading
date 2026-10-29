@@ -9,6 +9,12 @@ const { protect } = require('../middleware/authMiddleware');
 const asyncHandler = require('../utils/asyncHandler');
 const { serializeScan } = require('../services/scanService');
 const { serializeLotSummary, aggregateScans, computeValuation } = require('../services/lotService');
+const {
+  getSettings,
+  buildPolicy,
+  applyScanPolicy,
+} = require('../services/settingsService');
+const { presentScans, resolveLivePrice } = require('../services/presentationService');
 
 const router = express.Router();
 
@@ -60,6 +66,10 @@ router.post(
     if (avgNutWeightG > 1000) {
       return res.status(400).json({ error: 'Average nut weight cannot exceed 1000 g' });
     }
+    const measuredWeightKg = Math.max(0, Number(req.body.measuredWeightKg || 0) || 0);
+    if (measuredWeightKg > 1000000) {
+      return res.status(400).json({ error: 'Measured lot weight is outside the supported range' });
+    }
 
     const lot = await Lot.create({
       name,
@@ -68,11 +78,17 @@ router.post(
       notes: String(req.body.notes || '').trim().slice(0, 500),
       prices,
       avgNutWeightG,
+      measuredWeightKg,
       currency: String(req.body.currency || 'INR').trim().toUpperCase().slice(0, 8) || 'INR',
       user: req.user._id,
     });
 
-    return res.status(201).json({ success: true, lot: serializeLotSummary(lot, []) });
+    const settings = await getSettings();
+    return res.status(201).json({
+      success: true,
+      lot: serializeLotSummary(lot, [], settings),
+      policy: buildPolicy(settings),
+    });
   })
 );
 
@@ -97,12 +113,16 @@ router.get(
       scansByLot.get(key).push(scan);
     });
 
+    const settings = await getSettings();
+    const live = await resolveLivePrice(settings);
     const items = lots.map((lot) => {
       const lotScans = scansByLot.get(String(lot._id)) || [];
-      return serializeLotSummary(lot, lotScans);
+      return serializeLotSummary(lot, lotScans, settings, {
+        livePrice: live.price,
+      });
     });
 
-    return res.json({ items });
+    return res.json({ items, policy: buildPolicy(settings) });
   })
 );
 
@@ -119,12 +139,21 @@ router.get(
     const scans = await Scan.find({ user: req.user._id, lot: lot._id }).sort({
       createdAt: -1,
     });
-    const summary = serializeLotSummary(lot, scans);
-    const items = scans.map((scan) => serializeScan(scan, { includeDetections: false }));
+    const settings = await getSettings();
+    const live = await resolveLivePrice(settings);
+    const summary = serializeLotSummary(lot, scans, settings, {
+      livePrice: live.price,
+    });
+    const items = await presentScans(scans, settings, {
+      includeDetections: false,
+      includePricing: true,
+      livePrice: live.price,
+    });
 
     return res.json({
       lot: summary,
       scans: items,
+      policy: buildPolicy(settings),
     });
   })
 );
@@ -156,6 +185,13 @@ router.patch(
       if (avgNutWeightG > 1000) return res.status(400).json({ error: 'Average nut weight cannot exceed 1000 g' });
       lot.avgNutWeightG = avgNutWeightG;
     }
+    if (req.body.measuredWeightKg !== undefined) {
+      const measuredWeightKg = Math.max(0, Number(req.body.measuredWeightKg) || 0);
+      if (measuredWeightKg > 1000000) {
+        return res.status(400).json({ error: 'Measured lot weight is outside the supported range' });
+      }
+      lot.measuredWeightKg = measuredWeightKg;
+    }
     if (req.body.prices) {
       ['A', 'B', 'C', 'D'].forEach((letter) => {
         if (req.body.prices[letter] !== undefined) {
@@ -167,7 +203,13 @@ router.patch(
     await lot.save();
     const scans = await Scan.find({ user: req.user._id, lot: lot._id })
       .select('gradeA gradeB gradeC gradeD totalCount confidence qualityScore');
-    return res.json({ success: true, lot: serializeLotSummary(lot, scans) });
+    const settings = await getSettings();
+    const live = await resolveLivePrice(settings);
+    return res.json({
+      success: true,
+      lot: serializeLotSummary(lot, scans, settings, { livePrice: live.price }),
+      policy: buildPolicy(settings),
+    });
   })
 );
 
@@ -182,70 +224,97 @@ router.get(
     if (!lot) return res.status(404).json({ error: 'Lot not found' });
 
     const scans = await Scan.find({ user: req.user._id, lot: lot._id }).sort({ createdAt: 1 });
-    const aggregates = aggregateScans(scans);
-    const valuation = computeValuation(aggregates, lot);
+    const settings = await getSettings();
+    const policy = buildPolicy(settings);
+    const live = await resolveLivePrice(settings);
+    const aggregates = aggregateScans(scans, settings);
+    const valuation = computeValuation(aggregates, lot, settings, {
+      livePrice: live.price,
+    });
+    const views = scans.map((scan) =>
+      applyScanPolicy(serializeScan(scan, { includeDetections: false }), settings)
+    );
 
     const lines = [];
     lines.push('\ufeffLot,Arecanut batch export');
     lines.push(`Lot name,${csvEscape(lot.name)}`);
     lines.push(`Lot reference,${csvEscape(lot.reference || '')}`);
     lines.push(`Supplier,${csvEscape(lot.supplier || '')}`);
-    lines.push(`Currency,${csvEscape(valuation.currency)}`);
-    lines.push(`Average nut weight (g),${valuation.avgNutWeightG}`);
-    lines.push(`Price A (per kg),${valuation.prices.A}`);
-    lines.push(`Price B (per kg),${valuation.prices.B}`);
-    lines.push(`Price C (per kg),${valuation.prices.C}`);
-    lines.push(`Price D (per kg),${valuation.prices.D}`);
-    lines.push(`Scans,${aggregates.scanCount}`);
-    lines.push(`Total nuts,${aggregates.totalNuts}`);
-    lines.push(`Grade A,${aggregates.gradeCounts.A}`);
-    lines.push(`Grade B,${aggregates.gradeCounts.B}`);
-    lines.push(`Grade C,${aggregates.gradeCounts.C}`);
-    lines.push(`Grade D,${aggregates.gradeCounts.D}`);
-    lines.push(`Estimated total weight (kg),${valuation.totalWeightKg}`);
-    lines.push(`Estimated total value,${valuation.totalValue}`);
-    lines.push('Note,"Values are estimates based on user-provided average weight and prices."');
-    lines.push('');
+    lines.push(`Policy version,${policy.version}`);
+    lines.push(`Master prediction,${policy.masterEnabled ? 'on' : 'off'}`);
     lines.push(
-      [
-        'Report ID',
-        'Scan ID',
-        'Filename',
-        'Created at',
-        'Final grade',
-        'Grade A',
-        'Grade B',
-        'Grade C',
-        'Grade D',
-        'Total count',
-        'Confidence',
-        'Quality score',
-        'Model version',
-      ]
-        .map(csvEscape)
-        .join(',')
+      `Enabled grades,${policy.enabledLetters.length ? policy.enabledLetters.join('') : 'none'}`
     );
-
-    scans.forEach((scan) => {
+    lines.push(`Pricing mode,${policy.pricingMode}`);
+    lines.push(`Currency,${csvEscape(valuation.currency)}`);
+    lines.push(`Average nut weight (g),${csvEscape(valuation.avgNutWeightG)}`);
+    lines.push(`Measured lot weight (kg),${csvEscape(valuation.measuredWeightKg ?? '')}`);
+    lines.push(`Estimated nut-count weight (kg),${csvEscape(valuation.estimatedWeightKg ?? '')}`);
+    lines.push(`Scans,${aggregates.scanCount}`);
+    if (policy.masterEnabled) {
+      lines.push(`Total enabled nuts,${csvEscape(aggregates.totalNuts)}`);
+      policy.enabledLetters.forEach((letter) => {
+        lines.push(`Grade ${letter},${csvEscape(aggregates.gradeCounts[letter] ?? 0)}`);
+        if (settings.pricing.mode === 'manual') {
+          lines.push(
+            `Manual price ${letter},${csvEscape(
+              settings.pricing.manual[letter]?.price ?? ''
+            )} ${settings.pricing.manual[letter]?.unit || ''}`
+          );
+        }
+      });
+      if (settings.pricing.mode === 'live' && live.price) {
+        lines.push(`Live price per kg,${csvEscape(live.price.pricePerKg)}`);
+      }
+      lines.push(`Measured total weight (kg),${csvEscape(valuation.totalWeightKg ?? '')}`);
+      lines.push(`Measured-weight total value,${csvEscape(valuation.totalValue ?? '')}`);
+    } else {
       lines.push(
-        [
-          scan.reportId || '',
-          String(scan._id),
-          scan.filename || '',
-          scan.createdAt ? scan.createdAt.toISOString() : '',
-          scan.finalGrade || '',
-          scan.gradeA || 0,
-          scan.gradeB || 0,
-          scan.gradeC || 0,
-          scan.gradeD || 0,
-          scan.totalCount || 0,
-          scan.confidence ?? '',
-          scan.qualityScore ?? '',
-          scan.modelVersion || '',
-        ]
-          .map(csvEscape)
-          .join(',')
+        'Grade and price columns,hidden by administrator policy; historical records remain stored'
       );
+    }
+    lines.push(
+      'Note,"Values are estimates only. No total is claimed without measured/calibrated weight when a weight-based unit is used."'
+    );
+    lines.push('');
+
+    const header = [
+      'Report ID',
+      'Scan ID',
+      'Filename',
+      'Created at',
+      ...(policy.masterEnabled ? ['Final grade'] : []),
+      ...(policy.masterEnabled
+        ? policy.enabledLetters.map((letter) => `Grade ${letter}`)
+        : []),
+      ...(policy.masterEnabled ? ['Total enabled count', 'Confidence', 'Quality score'] : []),
+      'Model version',
+    ];
+    lines.push(header.map(csvEscape).join(','));
+
+    views.forEach((view, index) => {
+      const scan = scans[index];
+      const row = [
+        scan.reportId || '',
+        String(scan._id),
+        scan.filename || '',
+        scan.createdAt ? scan.createdAt.toISOString() : '',
+        ...(policy.masterEnabled
+          ? [
+              view.finalGradeSource === 'hidden_by_policy'
+                ? ''
+                : view.finalGrade || 'Invalid',
+            ]
+          : []),
+        ...(policy.masterEnabled
+          ? policy.enabledLetters.map((letter) => view.gradeCounts?.[letter] ?? '')
+          : []),
+        ...(policy.masterEnabled
+          ? [view.totalCount ?? '', view.confidence ?? '', view.qualityScore ?? '']
+          : []),
+        scan.modelVersion || '',
+      ];
+      lines.push(row.map(csvEscape).join(','));
     });
 
     const csv = lines.join('\n');

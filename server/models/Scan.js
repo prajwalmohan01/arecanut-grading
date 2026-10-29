@@ -50,10 +50,21 @@ const scanSchema = new mongoose.Schema(
       enum: ['Grade A', 'Grade B', 'Grade C', 'Grade D', 'Invalid'],
       required: true,
     },
+    finalGradeSource: {
+      type: String,
+      enum: ['model', 'gemini_advisory', 'none'],
+      default: 'model',
+    },
 
     confidence: { type: Number, default: null },
+    confidenceMethod: { type: String, default: null },
     qualityScore: { type: Number, default: null },
     qualityMethod: { type: String, default: null },
+    // Advisory Gemini visual review. This never contains per-nut counts or
+    // bounding boxes and is not treated as an object detector.
+    geminiAdvisory: { type: mongoose.Schema.Types.Mixed, default: null },
+    // Non-secret snapshot of the settings that were active at prediction time.
+    settingsSnapshot: { type: mongoose.Schema.Types.Mixed, default: null },
     detections: { type: [detectionSchema], default: [] },
     measurements: { type: mongoose.Schema.Types.Mixed, default: null },
     defects: { type: mongoose.Schema.Types.Mixed, default: null },

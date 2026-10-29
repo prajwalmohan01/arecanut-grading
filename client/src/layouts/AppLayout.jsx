@@ -19,6 +19,7 @@ import {
   UploadIcon,
   CloseIcon,
   ClockIcon,
+  ShieldCheckIcon,
 } from '../components/Icons';
 
 const NAV_GROUPS = [
@@ -65,6 +66,7 @@ const TITLES = {
   '/compare': { eyebrow: 'Analysis', title: 'Compare predictions' },
   '/performance': { eyebrow: 'Model', title: 'Performance & verification' },
   '/profile': { eyebrow: 'Account', title: 'Profile & settings' },
+  '/admin/settings': { eyebrow: 'Administration', title: 'System settings & policy' },
   '/manual': { eyebrow: 'Manual grading', title: 'Manual workspace' },
   '/manual/new': { eyebrow: 'Manual grading', title: 'Add a manual record' },
   '/manual/records': { eyebrow: 'Manual grading', title: 'Grading history' },
@@ -113,6 +115,18 @@ function SidebarContent({ onNavigate }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const initial = (user?.displayName || user?.username || 'U').slice(0, 1).toUpperCase();
+  const navGroups =
+    user?.role === 'admin'
+      ? [
+          ...NAV_GROUPS,
+          {
+            label: 'Administration',
+            items: [
+              { to: '/admin/settings', label: 'System settings', icon: ShieldCheckIcon },
+            ],
+          },
+        ]
+      : NAV_GROUPS;
 
   return (
     <div className="flex h-full flex-col">
@@ -121,7 +135,7 @@ function SidebarContent({ onNavigate }) {
       </div>
 
       <nav className="no-scrollbar flex-1 space-y-1 overflow-y-auto px-3 pb-3" aria-label="Main navigation">
-        {NAV_GROUPS.map((group, groupIndex) => (
+        {navGroups.map((group, groupIndex) => (
           <div key={group.label} className={groupIndex === 0 ? '' : 'pt-4'}>
             <p className="px-3 pb-1.5 text-[9px] font-bold uppercase tracking-[0.18em] text-muted">
               {group.label}
@@ -301,6 +315,16 @@ export default function AppLayout({ children }) {
                   >
                     <ProfileIcon width={16} height={16} /> Profile & settings
                   </button>
+                  {user?.role === 'admin' && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="nav-link w-full !py-2 text-left"
+                      onClick={() => navigate('/admin/settings')}
+                    >
+                      <ShieldCheckIcon width={16} height={16} /> System settings
+                    </button>
+                  )}
                   <button
                     type="button"
                     role="menuitem"

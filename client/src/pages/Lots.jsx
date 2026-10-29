@@ -2,13 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import API, { apiErrorMessage } from '../api/axios';
 import { useToast } from '../context/ToastContext';
+import { usePolicy } from '../context/PolicyContext';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import StatCard from '../components/ui/StatCard';
 import EmptyState from '../components/ui/EmptyState';
 import Spinner from '../components/ui/Spinner';
 import Modal from '../components/ui/Modal';
-import { TextField, SelectField } from '../components/ui/Field';
+import PolicyNotice from '../components/PolicyNotice';
+import { TextField } from '../components/ui/Field';
 import { GradeBadge } from '../components/ui/Badge';
 import {
   ArrowRightIcon,
@@ -22,6 +24,7 @@ import {
   formatDateTime,
   formatNumber,
   formatWeightKg,
+  pricingStatusText,
 } from '../utils/format';
 
 const EMPTY_FORM = {
@@ -30,15 +33,22 @@ const EMPTY_FORM = {
   supplier: '',
   currency: 'INR',
   avgNutWeightG: '',
-  priceA: '',
-  priceB: '',
-  priceC: '',
-  priceD: '',
+  measuredWeightKg: '',
   notes: '',
 };
 
 function LotCard({ lot }) {
   const totals = lot.totals || {};
+  const policy = lot.policy || {};
+  const gradingOn = policy.masterEnabled !== false;
+  const enabledLetters = gradingOn
+    ? Array.isArray(policy.enabledLetters)
+      ? policy.enabledLetters
+      : ['A', 'B']
+    : [];
+  const valuation = lot.valuation || {};
+  const measured = Number(valuation.measuredWeightKg) > 0;
+  const suggested = Number(valuation.estimatedWeightKg) > 0;
   return (
     <Card className="flex flex-col p-5 animate-in">
       <div className="flex items-start justify-between gap-3">
@@ -69,33 +79,57 @@ function LotCard({ lot }) {
         </div>
         <div className="rounded-2xl bg-[color:var(--panel-soft)] p-2.5">
           <p className="text-[10px] uppercase tracking-wide text-muted">Nuts</p>
-          <p className="mt-0.5 text-sm font-bold text-main">{formatNumber(totals.totalNuts || 0)}</p>
+          <p className="mt-0.5 text-sm font-bold text-main">
+            {gradingOn && totals.totalNuts !== null ? formatNumber(totals.totalNuts || 0) : '—'}
+          </p>
         </div>
         <div className="rounded-2xl bg-[color:var(--panel-soft)] p-2.5">
-          <p className="text-[10px] uppercase tracking-wide text-muted">Weight</p>
+          <p className="text-[10px] uppercase tracking-wide text-muted">Measured kg</p>
           <p className="mt-0.5 text-sm font-bold text-main">
-            {formatWeightKg(lot.valuation?.totalWeightKg)}
+            {measured ? formatWeightKg(valuation.measuredWeightKg) : '—'}
           </p>
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <GradeBadge grade="Grade A" />
-        <span className="text-xs text-muted">{formatNumber(totals.gradeCounts?.A || 0)}</span>
-        <GradeBadge grade="Grade B" />
-        <span className="text-xs text-muted">{formatNumber(totals.gradeCounts?.B || 0)}</span>
-      </div>
+      {gradingOn && enabledLetters.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {enabledLetters.map((letter) => {
+            const unavailable = (totals.unavailableGrades || []).includes(letter);
+            return (
+              <span key={letter} className="inline-flex items-center gap-1">
+                <GradeBadge grade={`Grade ${letter}`} />
+                <span className="text-xs text-muted">
+                  {unavailable ? 'not counted' : formatNumber(totals.gradeCounts?.[letter] || 0)}
+                </span>
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       <div className="mt-4 flex items-end justify-between gap-3 border-t border-[color:var(--border)] pt-3">
-        <div>
-          <p className="text-[10px] uppercase tracking-wide text-muted">Estimated value</p>
+        <div className="min-w-0">
+          <p className="text-[10px] uppercase tracking-wide text-muted">
+            {valuation.totalValue == null ? 'Measured-weight total' : 'Measured-weight value'}
+          </p>
           <p className="mt-0.5 font-display text-xl font-bold text-main">
-            {formatCurrency(lot.valuation?.totalValue, lot.currency)}
+            {valuation.totalValue == null
+              ? 'Not claimed'
+              : formatCurrency(valuation.totalValue, lot.currency)}
+          </p>
+          <p className="mt-0.5 text-[10px] text-muted">
+            {!gradingOn
+              ? 'Hidden by grading policy'
+              : valuation.totalValue == null
+              ? suggested
+                ? `Estimated nut-count weight ${formatWeightKg(valuation.estimatedWeightKg)} — enter measured lot weight to price`
+                : pricingStatusText(valuation)
+              : 'Based on measured lot weight'}
           </p>
         </div>
         <Link
           to={`/lots/${lot.id}`}
-          className="btn-secondary btn-sm"
+          className="btn-secondary btn-sm shrink-0"
           aria-label={`Open lot ${lot.name}`}
         >
           Open <ArrowRightIcon width={14} height={14} />
@@ -108,6 +142,8 @@ function LotCard({ lot }) {
 export default function Lots() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { policy } = usePolicy();
+  const gradingOn = policy?.masterEnabled !== false;
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -159,14 +195,9 @@ export default function Lots() {
         reference: form.reference,
         supplier: form.supplier,
         notes: form.notes,
-        currency: form.currency,
+        currency: policy?.currency || form.currency || 'INR',
         avgNutWeightG: Number(form.avgNutWeightG) || 0,
-        prices: {
-          A: Number(form.priceA) || 0,
-          B: Number(form.priceB) || 0,
-          C: Number(form.priceC) || 0,
-          D: Number(form.priceD) || 0,
-        },
+        measuredWeightKg: Number(form.measuredWeightKg) || 0,
       });
       const lot = response.data.lot;
       toast.success('Lot created. Add tray images to it from the upload page.');
@@ -183,16 +214,21 @@ export default function Lots() {
 
   return (
     <div className="space-y-5">
+      <PolicyNotice policy={policy} showPricing />
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
         <div>
           <h2 className="font-display text-2xl font-semibold text-main">Lots &amp; batches</h2>
           <p className="mt-1 text-sm text-muted">
-            Group tray predictions into a lot, then estimate its weight and value from your own
-            price assumptions.
+            Group tray predictions into a lot, record a measured net weight, and apply the active
+            administrator pricing policy.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={() => navigate('/upload')}>
+          <Button
+            variant="secondary"
+            onClick={() => navigate('/upload')}
+            disabled={!gradingOn}
+          >
             <UploadIcon width={16} height={16} /> Batch upload
           </Button>
           <Button onClick={() => setCreateOpen(true)}>
@@ -216,14 +252,18 @@ export default function Lots() {
         />
         <StatCard
           label="Detected nuts"
-          value={formatNumber(summary.nuts)}
-          hint="Across every lot"
+          value={gradingOn ? formatNumber(summary.nuts) : '—'}
+          hint={gradingOn ? 'Across enabled grades' : 'Hidden by grading policy'}
           tone="b"
         />
         <StatCard
-          label="Estimated value"
-          value={formatCurrency(summary.value)}
-          hint="Only where prices and weight are set"
+          label="Measured-weight value"
+          value={
+            gradingOn && policy?.pricingMode !== 'none'
+              ? formatCurrency(summary.value)
+              : '—'
+          }
+          hint="Only lots with measured weight and active pricing"
           icon={<CalculatorIcon width={17} height={17} />}
         />
       </div>
@@ -252,7 +292,7 @@ export default function Lots() {
                 <Button onClick={() => setCreateOpen(true)}>
                   <PlusIcon width={16} height={16} /> Create a lot
                 </Button>
-                <Button variant="secondary" onClick={() => navigate('/upload')}>
+                <Button variant="secondary" onClick={() => navigate('/upload')} disabled={!gradingOn}>
                   Batch upload
                 </Button>
               </div>
@@ -270,9 +310,9 @@ export default function Lots() {
       <div className="alert items-start text-[11px] leading-relaxed text-muted">
         <CalculatorIcon width={16} height={16} />
         <span>
-          Lot values are indicative estimates: detected nut counts × your average nut weight × your
-          price per kg. The model measures image-space boxes only, so weight is not measured by the
-          app.
+          Lot totals require a measured/calibrated net lot weight and an active pricing mode.
+          Average nut weight × detected count is shown only as a suggested weight estimate and is
+          never used to claim a lot value.
         </span>
       </div>
 
@@ -280,7 +320,7 @@ export default function Lots() {
         open={createOpen}
         onClose={() => !creating && setCreateOpen(false)}
         title="Create a lot"
-        description="Prices and average weight are optional now; you can edit them later on the lot page."
+        description="Measured net weight is optional now; you can record it later. Prices follow the administrator's active pricing policy."
         size="lg"
       >
         <form onSubmit={createLot} className="space-y-4">
@@ -310,19 +350,6 @@ export default function Lots() {
               maxLength={80}
               onChange={(event) => updateForm('supplier', event.target.value)}
             />
-            <SelectField
-              id="lot-currency"
-              label="Currency"
-              value={form.currency}
-              onChange={(event) => updateForm('currency', event.target.value)}
-            >
-              <option value="INR">INR (₹)</option>
-              <option value="USD">USD ($)</option>
-              <option value="EUR">EUR (€)</option>
-              <option value="GBP">GBP (£)</option>
-              <option value="LKR">LKR (Rs)</option>
-              <option value="NPR">NPR (Rs)</option>
-            </SelectField>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -334,25 +361,22 @@ export default function Lots() {
               max="1000"
               step="0.01"
               placeholder="e.g. 8.5"
-              hint="An assumption used for the weight and value estimate."
+              hint="A suggested estimate for reference only. It does not create a priced lot total."
               value={form.avgNutWeightG}
               onChange={(event) => updateForm('avgNutWeightG', event.target.value)}
             />
-            <div className="grid grid-cols-2 gap-2">
-              {['A', 'B', 'C', 'D'].map((letter) => (
-                <TextField
-                  key={letter}
-                  id={`lot-price-${letter}`}
-                  label={`Grade ${letter} price / kg`}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0"
-                  value={form[`price${letter}`]}
-                  onChange={(event) => updateForm(`price${letter}`, event.target.value)}
-                />
-              ))}
-            </div>
+            <TextField
+              id="lot-measured-weight"
+              label="Measured net lot weight (kg)"
+              type="number"
+              min="0"
+              max="1000000"
+              step="0.001"
+              placeholder="e.g. 12.5"
+              hint="Required before per-kg or per-quintal pricing can produce a lot total."
+              value={form.measuredWeightKg}
+              onChange={(event) => updateForm('measuredWeightKg', event.target.value)}
+            />
           </div>
 
           <div>

@@ -67,6 +67,38 @@ const config = {
   authRateLimitMax: Number(process.env.AUTH_RATE_LIMIT_MAX || 30),
   apiRateLimitMax: Number(process.env.API_RATE_LIMIT_MAX || 600),
   trustProxy: process.env.TRUST_PROXY === 'true',
+
+  // Gemini-assisted visual review. API keys are read by geminiService and are
+  // deliberately never copied into API responses or logs.
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+  geminiTimeoutMs: Number(process.env.GEMINI_TIMEOUT_MS || 30000),
+  geminiMaxRetries: Number(process.env.GEMINI_MAX_RETRIES || 2),
+  geminiImageMaxDimension: Number(
+    process.env.GEMINI_IMAGE_MAX_DIMENSION || 1280
+  ),
+  geminiCooldownMs: Number(process.env.GEMINI_COOLDOWN_MS || 60000),
+  geminiMaxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 900),
+
+  // AGMARKNET daily mandi prices. The public AGMARKNET 2.0 dashboard is the
+  // default keyless source. data.gov.in remains an optional fallback when a
+  // free DATA_GOV_IN_API_KEY (or legacy AGMARKNET_API_KEY) is configured.
+  marketSource: String(process.env.MARKET_PRICE_SOURCE || 'agmarknet_public')
+    .trim()
+    .toLowerCase(),
+  marketPublicBaseUrl: String(
+    process.env.MARKET_PUBLIC_BASE_URL || 'https://api.agmarknet.gov.in/v1'
+  )
+    .trim()
+    .replace(/\/+$/, ''),
+  marketFiltersCacheMinutes: Number(
+    process.env.MARKET_FILTERS_CACHE_MINUTES || 360
+  ),
+  marketLookbackDays: Number(process.env.MARKET_LOOKBACK_DAYS || 7),
+  marketResourceId:
+    process.env.MARKET_PRICE_RESOURCE_ID ||
+    '9ef84268-d588-465a-a308-a864a43d0070',
+  marketTimeoutMs: Number(process.env.MARKET_PRICE_TIMEOUT_MS || 20000),
+  marketCacheMinutes: Number(process.env.MARKET_PRICE_CACHE_MINUTES || 360),
 };
 
 function validateConfig() {
@@ -110,6 +142,49 @@ function validateConfig() {
   if (config.isProduction && config.allowedOrigins.includes('http://localhost:5173')) {
     warnings.push(
       'FRONTEND_URL is still http://localhost:5173 in production. Set your deployed frontend URL for CORS.'
+    );
+  }
+  if (!Number.isFinite(config.geminiTimeoutMs) || config.geminiTimeoutMs < 3000) {
+    warnings.push('GEMINI_TIMEOUT_MS should be at least 3000.');
+  }
+  if (!Number.isFinite(config.geminiMaxRetries) || config.geminiMaxRetries < 0) {
+    warnings.push('GEMINI_MAX_RETRIES should be zero or greater.');
+  }
+  if (
+    !Number.isFinite(config.geminiImageMaxDimension) ||
+    config.geminiImageMaxDimension < 256
+  ) {
+    warnings.push('GEMINI_IMAGE_MAX_DIMENSION should be at least 256.');
+  }
+  if (!['agmarknet_public', 'data_gov_in'].includes(config.marketSource)) {
+    errors.push(
+      "MARKET_PRICE_SOURCE must be 'agmarknet_public' (default) or 'data_gov_in'."
+    );
+  }
+  if (!/^https:\/\//i.test(config.marketPublicBaseUrl || '')) {
+    errors.push('MARKET_PUBLIC_BASE_URL must be an HTTPS URL.');
+  }
+  if (!Number.isFinite(config.marketTimeoutMs) || config.marketTimeoutMs < 2000) {
+    warnings.push('MARKET_PRICE_TIMEOUT_MS should be at least 2000.');
+  }
+  if (!Number.isFinite(config.marketLookbackDays) || config.marketLookbackDays < 0) {
+    warnings.push('MARKET_LOOKBACK_DAYS should be zero or greater.');
+  }
+  if (
+    !Number.isFinite(config.marketFiltersCacheMinutes) ||
+    config.marketFiltersCacheMinutes < 5
+  ) {
+    warnings.push('MARKET_FILTERS_CACHE_MINUTES should be at least 5.');
+  }
+  if (
+    process.env.GEMINI_ENABLED === 'true' &&
+    ![
+      'GEMINI_API_KEY',
+      ...Array.from({ length: 10 }, (_value, index) => `GEMINI_API_KEY_${index + 1}`),
+    ].some((name) => String(process.env[name] || '').trim())
+  ) {
+    warnings.push(
+      'GEMINI_ENABLED=true but no GEMINI_API_KEY or GEMINI_API_KEY_1..10 is configured. Gemini-assisted review will be unavailable.'
     );
   }
 

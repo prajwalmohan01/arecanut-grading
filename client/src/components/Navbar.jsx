@@ -42,6 +42,11 @@ export default function Navbar() {
               <NavLink to="/performance" className={navClass}>
                 Model
               </NavLink>
+              {user?.role === 'admin' && (
+                <NavLink to="/admin/settings" className={navClass}>
+                  Admin
+                </NavLink>
+              )}
             </>
           )}
         </nav>
@@ -120,6 +125,11 @@ export default function Navbar() {
                 <NavLink to="/performance" className={navClass} onClick={() => setOpen(false)}>
                   Model performance
                 </NavLink>
+                {user?.role === 'admin' && (
+                  <NavLink to="/admin/settings" className={navClass} onClick={() => setOpen(false)}>
+                    System settings
+                  </NavLink>
+                )}
                 <button
                   type="button"
                   className="nav-link text-left"

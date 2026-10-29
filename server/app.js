@@ -15,6 +15,9 @@ const manualPriceRoutes = require('./routes/manualPrices');
 const manualActivityRoutes = require('./routes/manualActivity');
 const verifyRoutes = require('./routes/verify');
 const systemRoutes = require('./routes/system');
+const adminRoutes = require('./routes/admin');
+const settingsRoutes = require('./routes/settings');
+const marketPriceRoutes = require('./routes/marketPrices');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const { ensureUploadDir } = require('./utils/files');
 
@@ -72,6 +75,9 @@ function createApp() {
   app.use('/api/manual/prices', manualPriceRoutes);
   app.use('/api/manual/activity', manualActivityRoutes);
   app.use('/api/verify', verifyRoutes);
+  app.use('/api/admin', adminRoutes);
+  app.use('/api/settings', settingsRoutes);
+  app.use('/api/market-prices', marketPriceRoutes);
   app.use('/api', systemRoutes);
 
   app.get('/', (_req, res) => {
