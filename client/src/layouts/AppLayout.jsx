@@ -102,7 +102,7 @@ function Brand() {
       <div className="min-w-0 leading-tight">
         <p className="truncate font-display text-base font-semibold text-main">ARECANUT QUALITY</p>
         <p className="truncate text-[9px] font-semibold uppercase tracking-[0.16em] text-muted">
-          Grading system
+          Grading System
         </p>
       </div>
     </div>
