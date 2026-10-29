@@ -4,6 +4,10 @@ const { config, validateConfig } = require('./config');
 const createApp = require('./app');
 const { connectDatabase, disconnectDatabase } = require('./database');
 const { getModelArtifactStatus } = require('./services/modelService');
+const {
+  warmupLocalInference,
+  shutdownLocalInference,
+} = require('./services/inferenceService');
 const { ensureAdminFromEnv } = require('./services/adminService');
 const { ensureUploadDir } = require('./utils/files');
 
@@ -27,6 +31,22 @@ async function start() {
       return;
     }
     console.log(`[model] Verified preserved model: ${artifact.metadata.id} (${artifact.checksum})`);
+    if (config.useInferenceWorker) {
+      // Warm the persistent worker in the background so the server accepts
+      // requests immediately; the first upload waits on the same promise.
+      console.log('[model] Starting persistent inference worker (one-time model load)...');
+      warmupLocalInference()
+        .then((info) => {
+          if (info.started) {
+            console.log(`[model] Inference worker ready in ${(info.startupMs / 1000).toFixed(1)}s`);
+          }
+        })
+        .catch((error) => {
+          console.warn(
+            `[model] Persistent worker unavailable; using per-request CLI: ${error.message}`
+          );
+        });
+    }
   } else {
     console.log(`[model] Inference transport: HTTP (${config.mlServiceUrl})`);
   }
@@ -74,6 +94,7 @@ async function start() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`[api] ${signal} received, shutting down...`);
+    await shutdownLocalInference();
     server.close(async () => {
       await disconnectDatabase();
       process.exit(0);

@@ -1,0 +1,99 @@
+{
+  "benchmark": "localisation_only",
+  "disclaimer": "Ground-truth class labels were ignored because the benchmark dataset does not contain individual-nut Grade A/B/C/D annotations. These numbers measure whether nuts were found, not whether grades are correct.",
+  "images_dir": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\large_tray",
+  "labels_dir": "C:\\Users\\Admin\\AppData\\Local\\Temp\\opencode\\empty_labels",
+  "image_count": 1,
+  "match_iou": 0.5,
+  "settings": {
+    "model_imgsz": 1280,
+    "tile_imgsz": 1280,
+    "conf": 0.05,
+    "model_iou": 0.5,
+    "augment": true,
+    "tiled": true,
+    "tile_size": 640,
+    "tile_overlap": 0.25,
+    "tile_merge_iou": 0.45,
+    "tile_duplicate_center_ratio": 0.3,
+    "core_ownership": false,
+    "include_full_image": false,
+    "dedupe_enabled": true,
+    "legacy_nms": true,
+    "dedupe_mode": "legacy_iou_nms"
+  },
+  "totals": {
+    "tp": 0,
+    "fp": 116,
+    "fn": 0,
+    "predictions": 116,
+    "ground_truth": 0,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "mean_predictions": 116.0,
+    "mean_ground_truth": 0.0
+  },
+  "timing": {
+    "total_seconds": 18.558,
+    "mean_seconds": 18.5579,
+    "median_seconds": 18.5579,
+    "min_seconds": 18.5579,
+    "max_seconds": 18.5579,
+    "note": "Includes inference, de-duplication, annotation drawing, and JPEG preview encoding (image decoding happens before the timer)."
+  },
+  "model": {
+    "id": "arecanut-yolov8-gradeab",
+    "version": "1.0.0",
+    "sha256": "5E141ABD6BD334E61AA733AA00994B8E5AF4D2104A677BE4A7B7215092883268",
+    "task": "detect",
+    "classes": {
+      "0": "GradeA",
+      "1": "GradeB"
+    },
+    "supported_grades": [
+      "A",
+      "B"
+    ],
+    "imgsz": 1280,
+    "conf": 0.05,
+    "iou": 0.5
+  },
+  "per_image": [
+    {
+      "image": "upload_1793177141217_86fd7ec858ee.jpg",
+      "width": 1500,
+      "height": 2000,
+      "predictions": 116,
+      "ground_truth": 0,
+      "tp": 0,
+      "fp": 116,
+      "fn": 0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "processing_ms": 18511.63,
+      "wall_ms": 18557.87,
+      "inference": {
+        "mode": "tiled",
+        "imgsz": 1280,
+        "tile_size": 640,
+        "tile_imgsz": 1280,
+        "tile_overlap": 0.25,
+        "tile_count": 12,
+        "tile_shape": [
+          640,
+          640
+        ],
+        "core_ownership": false,
+        "full_image_pass": false,
+        "augment": true,
+        "conf": 0.05,
+        "iou": 0.5,
+        "raw_detections": 175,
+        "deduped_detections": 116,
+        "dropped_duplicates": 59,
+        "error": null
+      }
+    }
+  ]
+}

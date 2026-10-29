@@ -1,0 +1,442 @@
+{
+  "checked_at": "2026-10-29T05:14:46.736018+00:00",
+  "api_base": "https://api.roboflow.com",
+  "dataset_count": 7,
+  "grade_capable_datasets": [],
+  "workflow_count": 3,
+  "workflows": [
+    {
+      "workspace": "kiran-gowda-fzr2h",
+      "name": "general-segmentation-api-2",
+      "error": null,
+      "url": "general-segmentation-api-2",
+      "display_name": "General Segmentation API 2",
+      "inputs": [
+        {
+          "name": "classes",
+          "type": "WorkflowParameter"
+        },
+        {
+          "name": "image",
+          "type": "InferenceImage"
+        }
+      ],
+      "step_types": [
+        "roboflow_core/mask_visualization@v1",
+        "roboflow_core/label_visualization@v1",
+        "roboflow_core/sam3@v3"
+      ],
+      "model_ids": [
+        "sam3/sam3_final"
+      ],
+      "promptable_segmentation_models": [
+        "sam3/sam3_final"
+      ],
+      "trained_grade_model": false,
+      "role": "Promptable segmentation workflow (free-text class prompt, SAM3). It does not expose trained Grade A/B/C/D classes and is not used for grading."
+    },
+    {
+      "workspace": "kiran-gowda-fzr2h",
+      "name": "general-segmentation-api-3",
+      "error": null,
+      "url": "general-segmentation-api-3",
+      "display_name": "General Segmentation API 3",
+      "inputs": [
+        {
+          "name": "classes",
+          "type": "WorkflowParameter"
+        },
+        {
+          "name": "image",
+          "type": "InferenceImage"
+        }
+      ],
+      "step_types": [
+        "roboflow_core/mask_visualization@v1",
+        "roboflow_core/label_visualization@v1",
+        "roboflow_core/sam3@v3"
+      ],
+      "model_ids": [
+        "sam3/sam3_final"
+      ],
+      "promptable_segmentation_models": [
+        "sam3/sam3_final"
+      ],
+      "trained_grade_model": false,
+      "role": "Promptable segmentation workflow (free-text class prompt, SAM3). It does not expose trained Grade A/B/C/D classes and is not used for grading."
+    },
+    {
+      "workspace": "kiran-gowda-fzr2h",
+      "name": "general-segmentation-api-5",
+      "error": null,
+      "url": "general-segmentation-api-5",
+      "display_name": "General Segmentation API 5",
+      "inputs": [
+        {
+          "name": "classes",
+          "type": "WorkflowParameter"
+        },
+        {
+          "name": "image",
+          "type": "InferenceImage"
+        }
+      ],
+      "step_types": [
+        "roboflow_core/mask_visualization@v1",
+        "roboflow_core/label_visualization@v1",
+        "roboflow_core/sam3@v3"
+      ],
+      "model_ids": [
+        "sam3/sam3_final"
+      ],
+      "promptable_segmentation_models": [
+        "sam3/sam3_final"
+      ],
+      "trained_grade_model": false,
+      "role": "Promptable segmentation workflow (free-text class prompt, SAM3). It does not expose trained Grade A/B/C/D classes and is not used for grading."
+    }
+  ],
+  "verdict": "No inspected dataset exposes Grade A, B, C, and D labels for individual nuts. Grade C/D support cannot be trained honestly from these datasets.",
+  "datasets": [
+    {
+      "reference": "csvtu/arecanut-sg2x7/1",
+      "workspace": "csvtu",
+      "project": "arecanut-sg2x7",
+      "version": "1",
+      "project_error": null,
+      "project_info": {
+        "name": "arecanut",
+        "type": "object-detection",
+        "images": 742,
+        "versions": 2,
+        "license": "CC BY 4.0",
+        "classes": {
+          "ripe": 26265,
+          "unripe": 17028
+        }
+      },
+      "version_error": null,
+      "classes_source": "project",
+      "version_info": {
+        "images": 741,
+        "splits": {
+          "valid": 75,
+          "test": 69,
+          "train": 597
+        },
+        "exports": [],
+        "model": null,
+        "classes": [
+          "ripe",
+          "unripe"
+        ]
+      },
+      "classes": [
+        "ripe",
+        "unripe"
+      ],
+      "grade_letters": [],
+      "grade_capable": false,
+      "proxy_hint": "ripeness labels (ripe/unripe), not grades"
+    },
+    {
+      "reference": "csvtu/arecanut-sg2x7/2",
+      "workspace": "csvtu",
+      "project": "arecanut-sg2x7",
+      "version": "2",
+      "project_error": null,
+      "project_info": {
+        "name": "arecanut",
+        "type": "object-detection",
+        "images": 742,
+        "versions": 2,
+        "license": "CC BY 4.0",
+        "classes": {
+          "ripe": 26265,
+          "unripe": 17028
+        }
+      },
+      "version_error": null,
+      "classes_source": "project",
+      "version_info": {
+        "images": 741,
+        "splits": {
+          "valid": 75,
+          "test": 69,
+          "train": 597
+        },
+        "exports": [
+          "coco",
+          "yolov11",
+          "yolov5pytorch",
+          "yolov8"
+        ],
+        "model": null,
+        "classes": [
+          "ripe",
+          "unripe"
+        ]
+      },
+      "classes": [
+        "ripe",
+        "unripe"
+      ],
+      "grade_letters": [],
+      "grade_capable": false,
+      "proxy_hint": "ripeness labels (ripe/unripe), not grades"
+    },
+    {
+      "reference": "haris-sdpsb/arecanut-uyhqw/3",
+      "workspace": "haris-sdpsb",
+      "project": "arecanut-uyhqw",
+      "version": "3",
+      "project_error": null,
+      "project_info": {
+        "name": "arecanut",
+        "type": "object-detection",
+        "images": 781,
+        "versions": 7,
+        "license": "CC BY 4.0",
+        "classes": {
+          "ripe": 2355,
+          "unripe": 13461
+        }
+      },
+      "version_error": null,
+      "classes_source": "version",
+      "version_info": {
+        "images": 1931,
+        "splits": {
+          "valid": 71,
+          "test": 78,
+          "train": 1782
+        },
+        "exports": [
+          "yolov5pytorch",
+          "yolov8"
+        ],
+        "model": {
+          "id": "arecanut-uyhqw/3",
+          "endpoint": "https://serverless.roboflow.com/arecanut-uyhqw/3",
+          "start": 1746781620.252,
+          "end": 1746787212.167,
+          "fromScratch": false,
+          "tfjs": true,
+          "oak": true,
+          "map": "77.41",
+          "recall": "71.32",
+          "precision": "68.48"
+        },
+        "classes": [
+          "ripe",
+          "unripe"
+        ]
+      },
+      "classes": [
+        "ripe",
+        "unripe"
+      ],
+      "grade_letters": [],
+      "grade_capable": false,
+      "proxy_hint": "ripeness labels (ripe/unripe), not grades"
+    },
+    {
+      "reference": "arecadetectmodel/areca-detection_model/4",
+      "workspace": "arecadetectmodel",
+      "project": "areca-detection_model",
+      "version": "4",
+      "project_error": null,
+      "project_info": {
+        "name": "areca-Detection_Model",
+        "type": "object-detection",
+        "images": 319,
+        "versions": 5,
+        "license": "CC BY 4.0",
+        "classes": {
+          "areca": 16321
+        }
+      },
+      "version_error": null,
+      "classes_source": "version",
+      "version_info": {
+        "images": 319,
+        "splits": {
+          "valid": 64,
+          "test": 31,
+          "train": 224
+        },
+        "exports": [
+          "yolov5pytorch",
+          "yolov8"
+        ],
+        "model": {
+          "id": "areca-detection_model/4",
+          "endpoint": "https://serverless.roboflow.com/areca-detection_model/4",
+          "start": 1732946878.479,
+          "end": 1732956546.993,
+          "fromScratch": false,
+          "tfjs": true,
+          "oak": true,
+          "map": "62.39",
+          "recall": "69.81",
+          "precision": "60.00"
+        },
+        "classes": [
+          "areca"
+        ]
+      },
+      "classes": [
+        "areca"
+      ],
+      "grade_letters": [],
+      "grade_capable": false,
+      "proxy_hint": "single generic nut class, no grade information"
+    },
+    {
+      "reference": "lakshan-krithik-5wkvh/arecanut-zu2zf/1",
+      "workspace": "lakshan-krithik-5wkvh",
+      "project": "arecanut-zu2zf",
+      "version": "1",
+      "project_error": null,
+      "project_info": {
+        "name": "ArecaNut",
+        "type": "object-detection",
+        "images": 2385,
+        "versions": 1,
+        "license": "CC BY 4.0",
+        "classes": {
+          "damaged": 96,
+          "good": 4772
+        }
+      },
+      "version_error": null,
+      "classes_source": "project",
+      "version_info": {
+        "images": 2385,
+        "splits": {
+          "train": 2385
+        },
+        "exports": [
+          "coco",
+          "multiclass",
+          "voc",
+          "yolov11",
+          "yolov8"
+        ],
+        "model": null,
+        "classes": [
+          "damaged",
+          "good"
+        ]
+      },
+      "classes": [
+        "damaged",
+        "good"
+      ],
+      "grade_letters": [],
+      "grade_capable": false,
+      "proxy_hint": "binary quality labels (good/damaged), not four grades"
+    },
+    {
+      "reference": "project-xqygb/areca-nut-djx7a/3",
+      "workspace": "project-xqygb",
+      "project": "areca-nut-djx7a",
+      "version": "3",
+      "project_error": null,
+      "project_info": {
+        "name": "Areca Nut ",
+        "type": "object-detection",
+        "images": 5470,
+        "versions": 6,
+        "license": "CC BY 4.0",
+        "classes": {
+          "damaged": 12948,
+          "good": 5766
+        }
+      },
+      "version_error": null,
+      "classes_source": "version",
+      "version_info": {
+        "images": 5475,
+        "splits": {
+          "valid": 589,
+          "test": 576,
+          "train": 4310
+        },
+        "exports": [
+          "yolov11",
+          "yolov5pytorch",
+          "yolov8"
+        ],
+        "model": {
+          "id": "areca-nut-djx7a/3",
+          "endpoint": "https://serverless.roboflow.com/areca-nut-djx7a/3",
+          "start": 1743320310.692,
+          "end": 1743328627.952,
+          "fromScratch": false,
+          "tfjs": true,
+          "oak": true,
+          "map": "80.39",
+          "recall": "83.61",
+          "precision": "71.95"
+        },
+        "classes": [
+          ".",
+          "damaged",
+          "good"
+        ]
+      },
+      "classes": [
+        ".",
+        "damaged",
+        "good"
+      ],
+      "grade_letters": [],
+      "grade_capable": false,
+      "proxy_hint": "binary quality labels (good/damaged), not four grades"
+    },
+    {
+      "reference": "rakshas-workspace-54tkl/koleroga_detector/1",
+      "workspace": "rakshas-workspace-54tkl",
+      "project": "koleroga_detector",
+      "version": "1",
+      "project_error": null,
+      "project_info": {
+        "name": "Koleroga_detector",
+        "type": "object-detection",
+        "images": 312,
+        "versions": 1,
+        "license": "CC BY 4.0",
+        "classes": {
+          "Healthy_nut": 1176,
+          "Koleroga_detector": 718
+        }
+      },
+      "version_error": null,
+      "classes_source": "project",
+      "version_info": {
+        "images": 312,
+        "splits": {
+          "valid": 31,
+          "test": 31,
+          "train": 250
+        },
+        "exports": [
+          "yolov8"
+        ],
+        "model": null,
+        "classes": [
+          "Healthy_nut",
+          "Koleroga_detector"
+        ]
+      },
+      "classes": [
+        "Healthy_nut",
+        "Koleroga_detector"
+      ],
+      "grade_letters": [],
+      "grade_capable": false,
+      "proxy_hint": "disease labels (healthy/koleroga), not grades"
+    }
+  ]
+}

@@ -1,8 +1,12 @@
 'use strict';
 
-require('dotenv').config();
-
 const path = require('path');
+
+// Resolve server/.env relative to this file so `node server/index.js` from the
+// repository root behaves the same as `npm start` inside server/.
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+const fs = require('fs');
 
 const ROOT_DIR = path.resolve(__dirname, '..');
 const DEFAULT_UPLOAD_DIR = path.join(__dirname, 'uploads');
@@ -35,6 +39,13 @@ const config = {
   ),
   mlTimeoutMs: Number(process.env.ML_TIMEOUT_MS || 120000),
   pythonPath: process.env.PYTHON_PATH || 'python',
+  useInferenceWorker: process.env.USE_INFERENCE_WORKER !== 'false',
+  workerStartupTimeoutMs: Number(process.env.ML_WORKER_STARTUP_TIMEOUT_MS || 90000),
+  inferenceWorkerPath: path.join(
+    ROOT_DIR,
+    'ml_service',
+    'inference_worker.py'
+  ),
   modelPath: process.env.MODEL_PATH
     ? path.resolve(ROOT_DIR, process.env.MODEL_PATH)
     : path.join(ROOT_DIR, 'ml_service', 'weights', 'best.pt'),
@@ -83,6 +94,18 @@ function validateConfig() {
   }
   if (config.mlTransport === 'http' && !config.mlServiceUrl) {
     errors.push('ML_SERVICE_URL is required when ML_TRANSPORT=http.');
+  }
+  if (config.mlTransport === 'local' && config.useInferenceWorker) {
+    if (!fs.existsSync(config.inferenceWorkerPath)) {
+      warnings.push(
+        `Inference worker script not found at ${config.inferenceWorkerPath}; requests will use the slower per-image CLI fallback.`
+      );
+    } else if (
+      !Number.isFinite(config.workerStartupTimeoutMs) ||
+      config.workerStartupTimeoutMs < 5000
+    ) {
+      errors.push('ML_WORKER_STARTUP_TIMEOUT_MS must be at least 5000.');
+    }
   }
   if (config.isProduction && config.allowedOrigins.includes('http://localhost:5173')) {
     warnings.push(

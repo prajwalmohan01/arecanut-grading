@@ -58,9 +58,10 @@ checkpoint is active.
 - **Frontend**: React 18 + Vite + Tailwind CSS (`http://localhost:5173`)
 - **Backend**: Node.js + Express + Mongoose (`http://localhost:5000`)
 - **Database**: MongoDB
-- **ML inference**: Ultralytics YOLOv8, run locally as a Python child process
-  (`ML_TRANSPORT=local`, the default) or over HTTP via `ml_service/predict.py`
-  (Flask on `:5001`)
+- **ML inference**: Ultralytics YOLOv8, run locally through a persistent Python
+  worker (`ML_TRANSPORT=local`, `USE_INFERENCE_WORKER=true`, the default) or
+  over HTTP via `ml_service/predict.py` (Flask on `:5001`). If the worker cannot
+  start, local requests fall back to the one-shot `standalone_predict.py` CLI.
 - **Auth**: JWT + bcryptjs, user/admin roles
 
 ```text
@@ -84,7 +85,8 @@ checkpoint is active.
 │   ├── weights/best.pt           # Committed production model
 │   ├── model_metadata.json
 │   ├── inference.py              # Single inference implementation
-│   ├── standalone_predict.py     # Local CLI used by the API
+│   ├── inference_worker.py       # Persistent local worker (JSON lines)
+│   ├── standalone_predict.py     # One-shot CLI fallback
 │   ├── predict.py                # Optional Flask service
 │   └── requirements.txt
 ├── scripts/                      # Manual training/evaluation workflow
@@ -93,10 +95,12 @@ checkpoint is active.
 │   ├── prepare_dataset.py
 │   ├── train_model.py
 │   ├── evaluate_model.py
-│   └── verify_model.py
+│   ├── verify_model.py
+│   ├── benchmark_inference.py    # Localisation speed/quality benchmark
+│   └── inspect_roboflow.py       # Read-only Roboflow dataset/workflow check
 ├── datasets/
 │   └── README.md                 # Where to put a real annotated dataset (data is ignored)
-└── training_reports/             # Real inspection/blocker reports
+└── training_reports/             # Real inspection, benchmark and blocker reports
 ```
 
 Raw datasets, Kaggle caches, training runs, candidate weights, backups and uploads are
@@ -318,23 +322,76 @@ grading controls.
 
 ## Inference settings for dense images
 
-Defaults are tuned for dense tray images and live in `ml_service/inference.py`. Override
-them in `server\.env` (they are inherited by the Python child process) or in the
-environment that starts the Flask service.
+Defaults are tuned for dense tray images. The shipped operational values live in
+`server\.env`/`server\.env.example` and are inherited by the Python worker/CLI. The
+`MODEL_IOU` and `MODEL_AUGMENT` code defaults in `ml_service/inference.py` remain the
+original `0.35`/`true` so a direct Flask invocation does not silently adopt the tuned
+thresholds; the tiling and de-duplication improvements apply to every path. Values are
+parsed defensively: a typo falls back to the default instead of crashing the service.
 
-| Variable | Default | Meaning |
+| Variable | Shipped value | Meaning |
 | --- | --- | --- |
 | `MODEL_CONF` | `0.05` | Confidence threshold |
-| `MODEL_IMGSZ` | `1280` | Inference image size |
-| `MODEL_IOU` | `0.35` | NMS IoU threshold |
+| `MODEL_IMGSZ` | `1280` | Full-image inference size (also the processed preview size) |
+| `MODEL_IOU` | `0.50` | Model NMS IoU threshold (code default: `0.35`) |
 | `MODEL_MAX_DET` | `2000` | Maximum detections per image |
-| `MODEL_AUGMENT` | `true` | Test-time augmentation |
+| `MODEL_AUGMENT` | `false` | Test-time augmentation (code default: `true`; slower and measurably less precise here) |
 | `USE_TILED` | `true` | Tiled inference for small/dense nuts |
 | `TILE_SIZE` | `640` | Tile size in pixels |
 | `TILE_OVERLAP` | `0.25` | Tile overlap fraction |
+| `TILE_IMGSZ` | `min(MODEL_IMGSZ, TILE_SIZE)` | Inference size per tile |
+| `TILE_MERGE_IOU` | `0.45` | Cross-tile duplicate-removal IoU |
+| `TILE_DUPLICATE_CENTER_RATIO` | `0.30` | Merge overlapping boxes with very close centres |
+| `TILE_CORE_OWNERSHIP` | `false` | Keep only boxes whose centre is in a tile's core region |
+| `TILE_MIN_IMAGE_FACTOR` | `1.5` | Tile only when the long edge exceeds `TILE_SIZE` × this |
+| `TILE_INCLUDE_FULL_IMAGE` | `false` | Add an optional full-image pass to tiled runs |
+| `USE_INFERENCE_WORKER` | `true` | Keep one Python process alive between uploads |
+| `ML_WORKER_STARTUP_TIMEOUT_MS` | `90000` | Worker model-load timeout |
+| `MODEL_DEBUG` | `false` | Lower the confidence floor for near-miss diagnostics |
+| `DEBUG_CONF_FLOOR` | `0.01` | Confidence floor used only when `MODEL_DEBUG=true` |
 
-Lower `MODEL_IMGSZ`, disable `MODEL_AUGMENT`, or disable `USE_TILED` on a slow CPU. Higher
-settings improve recall on dense trays but increase processing time.
+Tiling uses an edge-aligned plan: the final row and column are placed against the image
+border instead of leaving a thin skipped strip. Overlapping tile detections are merged by
+IoU, containment, and centre distance so touching neighbouring nuts are not merged. The
+JSON result exposes an `inference` block (`mode`, `tile_count`, `raw_detections`,
+`deduped_detections`, thresholds) so a run can be audited instead of guessed.
+
+The persistent worker is the main cold-start fix. Previously every local request spawned a
+new Python process and reloaded the 6.25 MB checkpoint (measured at roughly 3-20 s on CPU,
+depending on disk/page cache and antivirus). The worker loads the model once, answers
+JSON-line requests, times out and restarts safely, and falls back to the one-shot CLI if it
+cannot start. `ML_TRANSPORT=http` is unchanged and ignores the worker.
+
+To disable tiling or the worker on a very slow machine:
+
+```powershell
+# server\.env
+USE_TILED=false
+USE_INFERENCE_WORKER=false
+MODEL_AUGMENT=false
+```
+
+Higher settings can improve recall on dense trays but increase processing time. Do not
+raise `MODEL_CONF` or lower `MODEL_IMGSZ` without rechecking a real tray photo.
+
+### Measured effect of this upgrade
+
+Full methodology and raw JSON are in `training_reports/benchmark_summary.md`. The short
+version, measured on the same machine and images:
+
+| Check | Before | After |
+| --- | ---: | ---: |
+| CSVTU v2 test split, localisation precision | 0.5906 | 0.7337 |
+| CSVTU v2 test split, localisation recall | 0.1928 | 0.1825 |
+| CSVTU v2 test split, mean time/image | 1.24 s | 0.59 s |
+| User's 1500×2000 tray, detections | 104 | 110 |
+| Same tray, single-image benchmark (cold) | 13.29 s | 4.0–6.2 s (5.97 s committed) |
+| Same tray, warm persistent-worker request | not measured | 1.5–2.0 s |
+
+Precision and speed improved; recall on that dense dataset is essentially unchanged and
+remains the checkpoint's main weakness. These are **localisation** numbers, not Grade A/B
+accuracy. No supplied dataset contains per-nut grade labels, so grade accuracy is not
+claimed.
 
 ## Workflow A — Optional training reference (not needed to run)
 
@@ -374,6 +431,41 @@ does not train models during setup or startup.
 Inspection downloads only the annotation file for the 18.3 GB
 `alwyndsouza21092/arecanut-detection-dataset-1` dataset. The full image archive is never
 downloaded just to inspect labels.
+
+### Roboflow datasets and configured workflows
+
+The six Roboflow dataset links supplied with the project were inspected through the
+read-only Roboflow metadata API. Evidence is committed in
+`training_reports/roboflow_compatibility.json` and `.md`, and can be reproduced with:
+
+```powershell
+python scripts\inspect_roboflow.py
+```
+
+| Dataset | Images | Classes | Grade A/B/C/D? |
+| --- | ---: | --- | --- |
+| `csvtu/arecanut-sg2x7` v2 | 741 | `ripe`, `unripe` | no |
+| `haris-sdpsb/arecanut-uyhqw` v3 | 1,931 | `ripe`, `unripe` | no |
+| `arecadetectmodel/areca-detection_model` v4 | 319 | `areca` | no |
+| `lakshan-krithik-5wkvh/arecanut-zu2zf` v1 | 2,385 | `good`, `damaged` | no |
+| `project-xqygb/areca-nut-djx7a` v3 | 5,475 | `good`, `damaged`, `.` | no |
+| `rakshas-workspace-54tkl/koleroga_detector` v1 | 312 | `Healthy_nut`, `Koleroga_detector` | no |
+
+Some versions have trained YOLOv8/YOLOv11 weights (for example the Djx7a version reports
+mAP50 80.39% for `good`/`damaged`), but those classes are binary quality or ripeness
+labels. None identifies individual nuts as Grade A, B, C, or D. They therefore cannot
+train or validate the application's grade head, and this project does not silently map
+`good`/`damaged` onto A/B/C/D.
+
+The Roboflow workflows configured in `server\.env`
+(`general-segmentation-api-2`, `-3`, `-5`) were also inspected. All three run
+`sam3/sam3_final`, a promptable segmentation model with a free-text `classes` input. They
+are segmentation utilities, not trained grade classifiers, and are deliberately not used
+for grading results.
+
+**Consequence:** Grade C/D support remains blocked on data, not on code. The application
+already reads four-grade checkpoints when present, but no verified four-grade checkpoint
+or dataset exists here. See `training_reports/roboflow_compatibility.md` for the verdict.
 
 ### Optional X-ray dataset (separate from the active A-D model)
 
@@ -677,6 +769,51 @@ PDFKit does not append blank pages.
 - an assessment report with the record summary, QR code, verification URL, and explicit
   "not an accredited certificate" notice.
 
+## Rollback this upgrade
+
+The model, datasets, authentication, manual grading, and PDF code were not replaced. If you
+need the previous behaviour:
+
+```powershell
+# Stop the API and the Python worker first, then from the repository root:
+# 1. Roll back the tracked files.
+git restore README.md ml_service/inference.py server/.env.example `
+  server/config.js server/index.js server/services/inferenceService.js
+
+# 2. Remove only the files added by this upgrade.
+Remove-Item -ErrorAction SilentlyContinue @(
+  'ml_service/inference_worker.py',
+  'scripts/benchmark_inference.py',
+  'scripts/inspect_roboflow.py',
+  'scripts/tests/test_inference_tiling.py',
+  'server/tests/unit/inferenceService.test.js',
+  'training_reports/benchmark_summary.md',
+  'training_reports/roboflow_compatibility.json',
+  'training_reports/roboflow_compatibility.md'
+)
+Remove-Item -ErrorAction SilentlyContinue training_reports\benchmark_*.json
+
+# 3. Switch back to your previous branch if the upgrade was committed.
+git switch main
+```
+
+Then restore these `server\.env` values (the pre-upgrade tuning):
+
+```dotenv
+MODEL_AUGMENT=true
+MODEL_IOU=0.50
+TILE_SIZE=640
+TILE_OVERLAP=0.25
+USE_TILED=true
+```
+
+Remove the new keys (`TILE_IMGSZ`, `TILE_MERGE_IOU`, `TILE_DUPLICATE_CENTER_RATIO`,
+`TILE_CORE_OWNERSHIP`, `TILE_MIN_IMAGE_FACTOR`, `TILE_INCLUDE_FULL_IMAGE`,
+`USE_INFERENCE_WORKER`, `ML_WORKER_STARTUP_TIMEOUT_MS`, `DEBUG_CONF_FLOOR`) if the old code
+is restored. Finally run `python scripts\verify_model.py` and start the app again. The
+model checksum must stay
+`5E141ABD6BD334E61AA733AA00994B8E5AF4D2104A677BE4A7B7215092883268`.
+
 ## Testing and verification
 
 ```powershell
@@ -692,7 +829,17 @@ npm run test:integration
 # Server syntax
 node --check index.js
 node --check app.js
+node --check services/inferenceService.js
 cd ..
+
+# Python tiling, de-duplication, worker, and dataset tests
+python -m unittest discover -s scripts\tests -p "test_*.py" -v
+
+# Optional benchmark (needs a local YOLO-format dataset)
+python scripts\benchmark_inference.py --help
+
+# Optional read-only Roboflow metadata check (needs ROBOFLOW_API_KEY)
+python scripts\inspect_roboflow.py
 
 # Frontend production build
 cd client
@@ -700,13 +847,18 @@ npm run build
 cd ..
 ```
 
-The server suite contains 10 unit tests for validation/summary/CSV safety and a 17-step
-HTTP integration workflow covering authentication, uploads, duplicate rejection and
-override, filters, comparison, review, corrections, batch unassignment/deletion snapshots,
-PDF/CSV reports, QR/public verification, prices, and activity. The integration workflow uses
+The server suite contains 15 unit tests for inference normalisation, validation, summary,
+CSV safety, and search escaping, plus a 17-step HTTP integration workflow covering
+authentication, uploads, duplicate rejection and override, filters, comparison, review,
+corrections, batch unassignment/deletion snapshots, PDF/CSV reports, QR/public
+verification, prices, and activity. The integration workflow uses
 `mongodb-memory-server` and a temporary upload directory, so it does not read or modify the
 application's configured MongoDB database. The MongoDB test binary is cached under
 `server/node_modules/.cache/mongodb-memory-server/` after the first download.
+
+The Python suite (23 tests) covers tile coverage and edge alignment, duplicate suppression,
+the worker JSON protocol, and the separate X-ray dataset validation. Neither suite loads
+the trained network, so both run quickly and do not require GPU access.
 
 ## Troubleshooting
 
@@ -718,6 +870,15 @@ application's configured MongoDB database. The MongoDB test binary is cached und
   `PYTHON_PATH` in `server\.env` to the full interpreter path.
 - **Local inference timeout**: lower `MODEL_IMGSZ`, set `MODEL_AUGMENT=false`, or set
   `USE_TILED=false`; raise `ML_TIMEOUT_MS` if needed.
+- **Persistent worker warning at startup**: read the message. If the worker cannot load,
+  the server still works through the slower one-shot CLI. Check `PYTHON_PATH`, run
+  `python ml_service\inference_worker.py` manually, and look for an
+  `ultralytics`/`torch` import error. Set `USE_INFERENCE_WORKER=false` to silence it.
+- **Very slow first upload after a restart**: the worker is loading the checkpoint once
+  (~20 s on CPU). Later uploads use the warm process. Wait for
+  `[model] Inference worker ready` in the server log.
+- **Out of memory with very large photos**: reduce `TILE_SIZE`/`TILE_IMGSZ` or
+  `MAX_UPLOAD_MB`; the model and preview both hold full-size images in memory.
 - **`JWT_SECRET` error**: set a value of at least 16 characters in `server\.env`.
 - **Port conflict**: change `PORT` in `server\.env`; update the Vite proxy in
   `client/vite.config.js` if the API port changes.
@@ -735,8 +896,17 @@ application's configured MongoDB database. The MongoDB test binary is cached und
 - No defect model is bundled; defect sections state that detection was not evaluated.
 - Physical millimetre measurements are unavailable without camera calibration; only
   image-space box sizes are shown.
-- No verified held-out evaluation report is bundled for the preserved weights, so no
-  accuracy metrics are claimed.
+- No verified held-out Grade A/B evaluation report is bundled for the preserved weights,
+  so no grade accuracy metrics are claimed. The benchmark in
+  `training_reports/benchmark_summary.md` measures nut localisation only.
+- On the CSVTU dense-tray test split the preserved checkpoint finds roughly one in five
+  nuts at the default threshold. Tiling and de-duplication change precision/speed, not
+  the model's fundamental recall limit.
+- The persistent worker keeps one Python process and model in memory; it is restarted on
+  crash/timeout and falls back to the one-shot CLI. Both paths use the same inference code.
+- The six inspected Roboflow datasets use ripeness, binary quality, disease, or generic nut
+  labels. None contains individual-nut Grade A/B/C/D annotations, so C/D training remains
+  blocked on new labelled data.
 - The older public Kaggle datasets inspected are image-level classification datasets. The
   two `alwyndsouza21092` datasets add real nut-level boxes, but only the single class
   `areca_fruit`; they cannot support A/B/C/D grade training without new annotation work.
@@ -760,6 +930,9 @@ application's configured MongoDB database. The MongoDB test binary is cached und
 ## Security notes
 
 - Never commit `server/.env`, Kaggle credentials, datasets, uploads, candidates or backups.
+- Rotate any API key that has been pasted into a terminal, screenshot, issue, or log.
+  `scripts/inspect_roboflow.py` reads `ROBOFLOW_API_KEY` from the environment or
+  `server/.env` and never writes it to its reports.
 - Change the example `JWT_SECRET` and admin password before sharing a deployment.
 - Passwords are hashed with bcrypt and never logged.
 - The API validates uploaded files by type and size and isolates scans per user.
