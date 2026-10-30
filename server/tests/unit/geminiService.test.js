@@ -34,6 +34,29 @@ function validAdvisory(overrides = {}) {
   };
 }
 
+function validDefects(overrides = {}) {
+  return {
+    blackSpots: {
+      status: 'detected',
+      explanation: 'Several dark surface patches are visible on the nuts.',
+      affectedNutCount: 4,
+    },
+    cracks: {
+      status: 'not_detected',
+      explanation: 'No visible splits or fissures are apparent.',
+    },
+    mold: {
+      status: 'uncertain',
+      explanation: 'A small pale patch is visible, but lighting makes it ambiguous.',
+    },
+    discoloration: {
+      status: 'not_detected',
+      explanation: 'Colour variation is consistent with natural nut appearance.',
+    },
+    ...overrides,
+  };
+}
+
 function envelope(payload) {
   return {
     candidates: [
@@ -87,10 +110,54 @@ function restoreEnv(snapshot) {
 
 test('Gemini JSON parser enforces the strict advisory schema', () => {
   const parsed = parseJsonResponse(
-    '```json\n' + JSON.stringify(validAdvisory()) + '\n```'
+    '```json\n' + JSON.stringify(validAdvisory()) + '\n```',
+    { requireDefects: false }
   );
-  assert.deepEqual(parsed, validAdvisory());
+  assert.deepEqual(parsed, { ...validAdvisory(), defects: null });
 
+  const parsedWithDefects = parseJsonResponse(
+    JSON.stringify({ ...validAdvisory(), defects: validDefects() })
+  );
+  assert.equal(parsedWithDefects.defects.mold.status, 'uncertain');
+  assert.equal(parsedWithDefects.defects.blackSpots.affectedNutCount, null);
+  assert.equal(parsedWithDefects.defects.cracks.affectedNutCount, null);
+
+  assert.throws(
+    () => parseJsonResponse(JSON.stringify(validAdvisory())),
+    /missing defect findings/
+  );
+  assert.throws(
+    () =>
+      parseJsonResponse(
+        JSON.stringify({
+          ...validAdvisory(),
+          defects: validDefects({ cracks: { status: 'maybe', explanation: 'Unclear.' } }),
+        })
+      ),
+    /cracks.*invalid status/
+  );
+  assert.throws(
+    () =>
+      parseJsonResponse(
+        JSON.stringify({
+          ...validAdvisory(),
+          defects: validDefects({ mold: { status: 'detected', explanation: '' } }),
+        })
+      ),
+    /mold.*missing an explanation/
+  );
+  assert.throws(
+    () =>
+      parseJsonResponse(
+        JSON.stringify({
+          ...validAdvisory(),
+          defects: validDefects({
+            blackSpots: { status: 'detected', explanation: 'Dark spots.', affectedNutCount: 2.5 },
+          }),
+        })
+      ),
+    /blackSpots.*invalid affectedNutCount/
+  );
   assert.throws(
     () => parseJsonResponse(JSON.stringify(validAdvisory({ gradeHint: 'Grade Z' }))),
     /invalid gradeHint/
@@ -100,7 +167,10 @@ test('Gemini JSON parser enforces the strict advisory schema', () => {
     /imageUsable/
   );
   assert.throws(
-    () => parseJsonResponse(JSON.stringify(validAdvisory({ evidence: [] }))),
+    () =>
+      parseJsonResponse(JSON.stringify(validAdvisory({ evidence: [] })), {
+        requireDefects: false,
+      }),
     /without supporting visual evidence/
   );
   assert.throws(
@@ -117,7 +187,8 @@ test('Gemini JSON parser enforces the strict advisory schema', () => {
           evidence: [],
           containsMixedGrades: true,
         })
-      )
+      ),
+      { requireDefects: false }
     ),
     {
       imageUsable: false,
@@ -125,8 +196,63 @@ test('Gemini JSON parser enforces the strict advisory schema', () => {
       evidence: [],
       limitations: validAdvisory().limitations,
       containsMixedGrades: true,
+      defects: null,
     }
   );
+});
+
+test('Gemini defect analysis returns image-level statuses and discards unverified counts', async (t) => {
+  const env = snapshotEnv();
+  const previousFetch = setFetchForTests(null);
+  resetGeminiState();
+  t.after(() => {
+    restoreEnv(env);
+    setFetchForTests(previousFetch);
+    resetGeminiState();
+  });
+
+  clearKeys();
+  process.env.GEMINI_API_KEY = 'unit-test-defect-key-not-real';
+  let requestBody = null;
+  setFetchForTests(async (_url, init) => {
+    requestBody = JSON.parse(init.body);
+    return response(
+      200,
+      envelope({
+        ...validAdvisory({ evidence: ['Dark patches are visible on several nuts.'] }),
+        defects: validDefects(),
+      })
+    );
+  });
+
+  const result = await analyzeImage(PNG, {
+    settings: geminiSettings(),
+    context: {
+      supportedGrades: ['A', 'B'],
+      includeDefects: true,
+      requireDefects: true,
+      enabledDefectCategories: ['blackSpots', 'mold'],
+    },
+  });
+
+  assert.equal(result.status, 'ok');
+  assert.equal(result.analysisMethod, 'gemini_vision');
+  assert.equal(result.defects.analysisStatus, 'success');
+  assert.equal(result.defects.analysisMethod, 'gemini_vision');
+  assert.equal(result.defects.localizationAvailable, false);
+  assert.equal(result.defects.affectedNutCountsAvailable, false);
+  assert.equal(result.defects.categories.blackSpots.status, 'detected');
+  assert.equal(result.defects.categories.blackSpots.affectedNutCount, null);
+  assert.equal(result.defects.categories.mold.name, 'Suspected Mold');
+  assert.equal(result.defects.categories.cracks, undefined);
+  assert.equal(
+    requestBody.generationConfig.responseSchema.properties.defects.required.includes('mold'),
+    true
+  );
+  const prompt = requestBody.contents[0].parts[0].text;
+  assert.match(prompt, /Never claim a fungal infection/);
+  assert.match(prompt, /affectedNutCount to null/);
+  assert.equal(JSON.stringify(result).includes('unit-test-defect-key-not-real'), false);
 });
 
 test('Gemini review fails clearly when no server key is configured', async (t) => {

@@ -3,8 +3,9 @@
 MERN application for detecting and grading individual arecanuts in a tray image, with a
 preserved YOLOv8 detector, a processed/annotated image preview, prediction history, and a
 policy-aware PDF report. Admin-controlled switches gate master prediction, individual
-grades, Gemini-assisted Grade C/D advisory review, live AGMARKNET pricing, and manual
-pricing. It also includes a separate manual grading workspace for user-assigned Grade A and
+grades, Gemini-assisted Grade C/D advisory review, image-level defect findings (black spots,
+cracks, suspected mold, and discoloration), Gemini-assisted analysis, live AGMARKNET pricing,
+and manual pricing. It also includes a separate manual grading workspace for user-assigned Grade A and
 Grade B records, batches, review and correction history, PDF/CSV reports, QR verification,
 and user-entered value calculations.
 
@@ -20,7 +21,7 @@ retraining, no dataset download, and no Kaggle account are required for normal u
 | Grade A / Grade B | Yes |
 | Grade C / Grade D detector | **No.** The checkpoint has only `GradeA` and `GradeB` classes |
 | Grade C / Grade D advisory | Optional Gemini image-level advisory only; never a detector or nut count |
-| Defect detection (black spots, cracks, mold, discoloration) | **No.** No defect model is bundled |
+| Defect findings (black spots, cracks, suspected mold, discoloration) | Optional Gemini image-level findings; **no localized defect detector or verified affected-nut counts are bundled** |
 | Physical size in millimetres | **No.** Requires camera calibration; values are image-space only |
 | PDF report with original, annotated and processed images | Yes, subject to the active admin policy |
 
@@ -28,7 +29,8 @@ Grade support is derived at runtime from the loaded checkpoint's own class names
 application is four-grade capable, but it will report C/D only when an installed checkpoint
 actually contains `GradeC`/`GradeD` classes, or as a clearly labelled Gemini visual advisory
 when an administrator enables that path. It never relabels A/B predictions as C/D and never
-invents defects, measurements, counts, confidence scores, or market prices.
+invents defect boxes, affected-nut counts, measurements, confidence scores, or market prices.
+Gemini defect findings are image-level statuses, not localized detector output.
 
 The bundled model metadata is in `ml_service/model_metadata.json`, including the SHA-256
 checksum and documented limitations.
@@ -57,10 +59,14 @@ The model support table above is authoritative: Grade C and Grade D are displaye
 UI for completeness, but are marked **not evaluated** while the bundled two-class
 checkpoint is active. An administrator can optionally turn on Gemini-assisted advisory
 review for C/D; that is a non-counting visual opinion, not a validated C/D prediction.
+Defect review is separately switched, runs only when master prediction is on, and defaults
+off. It reports image-level `detected`, `not_detected`, `uncertain`, or `error` statuses
+without defect locations or affected-nut counts.
 
 After signing in, an admin can open **Admin → Admin settings** (`/admin/settings`) to
-control master prediction, grade visibility, Gemini advisory, and pricing. Non-admin users
-see only the policy-filtered result, history, lots, charts, CSV, and PDF output.
+control master prediction, grade visibility, Gemini-assisted analysis, defect categories,
+and pricing. Non-admin users see only the policy-filtered result, history, lots, charts, CSV,
+and PDF output.
 
 ## Admin policy, Gemini advisory, and pricing
 
@@ -69,13 +75,16 @@ see only the policy-filtered result, history, lots, charts, CSV, and PDF output.
 Admins use **Admin → Admin settings** (`/admin/settings`). The controls are persisted in a
 single MongoDB `SystemSettings` document with optimistic versioning and an admin audit
 entry, so they are not hard-coded in React or in `.env`. The defaults are: master prediction
-on, Grade A/B on, Grade C/D off, Gemini advisory off, and **no active pricing mode**.
+on, Grade A/B on, Grade C/D off, Gemini-assisted analysis off, master defect detection off
+(the four defect categories are on beneath it), and **no active pricing mode**.
 
 | Control | What it changes |
 | --- | --- |
-| Master prediction | Global on/off gate for model grading and pricing |
+| Master prediction | Global on/off gate for model grading, defect review, and pricing |
 | Grade A, B, C, D | Which grades may appear in results, counts, charts, CSV, lots, and PDF |
-| Gemini-assisted prediction | Enables the optional non-counting Gemini review path |
+| Gemini-assisted analysis | Enables the optional non-counting Gemini review path for C/D and enabled defects |
+| Master defect detection | Gate for defect findings, explanations, history/analytics summaries, CSV columns, and PDF sections |
+| Black spots, cracks, suspected mold, discoloration | Individual defect categories beneath the master defect switch |
 | Live Market Price | Uses an AGMARKNET quote per kg; mutually exclusive with manual pricing |
 | Manual Price Mode | Uses admin-entered per-grade prices; mutually exclusive with live pricing |
 
@@ -87,9 +96,15 @@ record visible again.
 
 When **Master prediction** is off, the API does **not** run inference and suppresses all
 grading output: grades, counts, percentages, confidence, quality, charts, measurements,
-defects, warnings, processed/annotated images, pricing, and grade/price PDF sections. The
-original upload may remain viewable. History and lot totals remain stored but are filtered;
-changing the master switch is not a data-deletion operation.
+defect analysis, warnings, processed/annotated images, pricing, and grade/price PDF sections.
+The original upload may remain viewable. History and lot totals remain stored but are
+filtered; changing the master switch is not a data-deletion operation.
+
+Defect filtering is also server-side and non-destructive. When the master defect switch or
+every category is off, the defect object is omitted from prediction details, history, CSV,
+analytics, comparisons, and PDFs. Disabled category names, explanations, and counts are not
+included in warnings or limitations. Stored records keep their original values and become
+visible again when the category is re-enabled.
 
 Because annotation boxes reveal the class of every detection, the annotated image and
 annotated PDF evidence are exposed only when **every grade supported by the installed
@@ -130,6 +145,37 @@ or supplied as defaults with `GEMINI_MODEL`, `GEMINI_TIMEOUT_MS`, `GEMINI_MAX_RE
 `GEMINI_IMAGE_MAX_DIMENSION`. The default model is `gemini-3.5-flash`. `GEMINI_COOLDOWN_MS`
 and `GEMINI_MAX_OUTPUT_TOKENS` are environment defaults. No key is committed to the
 repository.
+
+### Gemini-assisted image-level defect review
+
+Defect review is a separate Gemini request path from grade advisory. It is disabled by
+default and requires **Master prediction**, **Master defect detection**, **Gemini-assisted
+analysis**, and at least one defect category. The prompt receives the original uploaded image
+and asks for a strict structured result for every category:
+
+- `detected` — the defect appearance is visibly present;
+- `not_detected` — the image is usable and there is no visible evidence;
+- `uncertain` — lighting, blur, overlap, resolution, or angle makes the finding ambiguous;
+- `error` — that category could not be assessed from this image.
+
+The response also includes a short explanation per category and a limitations list.
+Gemini is instructed to say “Suspected Mold” or “mold-like growth”, never to claim a fungal
+infection or identify a fungus. A defect finding does **not** automatically downgrade the
+Grade A/B result; grading and defects are separate outputs.
+
+The application never trusts Gemini for affected-nut counts, defect locations, bounding
+boxes, or confidence percentages. Any self-reported count is discarded and the stored result
+sets `affectedNutCount` to `null`, `localizationAvailable` to `false`, and
+`affectedNutCountsAvailable` to `false`. PDFs and screenshots state that affected-nut counts
+and localized defects require a validated detector or segmentation model. `Suspected Mold`
+is an appearance description, not a laboratory or fungal confirmation.
+
+If Gemini is disabled, has no configured key, times out, or returns an invalid response, every
+enabled category is reported as `error` with the message “Analysis unavailable”. The UI keeps
+the scan, shows a useful **Retry analysis** action, and never relabels the result as
+“Not detected”. `POST /api/scans/:id/reanalyze` reruns only Gemini against the stored original
+image; it does not rerun the Grade A/B checkpoint or create a new scan. A missing original
+image returns HTTP `409` rather than a fabricated result.
 
 ### Live market and manual pricing
 
@@ -191,11 +237,11 @@ can read the active quote only while live mode and master prediction are on.
 ├── start.ps1                     # Root startup helper (PowerShell)
 ├── client/                       # React frontend
 │   ├── src/pages/manual/         # Authenticated manual grading workspace
-│   └── src/pages/AdminSettings.jsx # Admin policy, Gemini, and pricing controls
+│   └── src/pages/AdminSettings.jsx # Admin policy, Gemini, defect, and pricing controls
 ├── server/                       # Express API, MongoDB models, PDF generation
 │   ├── .env.example
 │   ├── routes/                   # AI, auth, manual grading, admin, settings, market
-│   ├── services/                 # Inference, policy, pricing, Gemini, AGMARKNET
+│   ├── services/                 # Inference, policy, pricing, Gemini, defects, AGMARKNET
 │   ├── utils/pdf.js              # AI report PDF
 │   ├── utils/manualPdf.js        # Manual record, batch, and assessment PDFs
 │   ├── tests/                    # node:test unit and in-memory MongoDB integration tests
@@ -370,7 +416,9 @@ The frontend proxies `/api` and `/uploads` to `http://localhost:5000` in develop
    - **Annotated Detection** image with bounding boxes,
    - **Processed Model-Input Preview**,
    - grade composition, image-level grade, confidence, quality heuristic,
-   - an explicit notice when C/D or defects are not supported.
+   - enabled Gemini image-level defect findings with explicit limitations,
+   - an explicit “Analysis unavailable” notice with a retry action when Gemini cannot run,
+     and an explicit notice when C/D has no validated detector.
 4. Download the PDF report from the result or history page.
 5. Select multiple images in one go for a **batch**; it is grouped into a **lot** (created
    automatically when you do not pick an existing one). A single image can optionally join a lot.
@@ -814,7 +862,8 @@ deliberately limited public assessment verification endpoint.
 | `GET` | `/api/scans/:id` | Scan details |
 | `GET` | `/api/scans/:id/image/:kind` | `original`, `annotated` or `processed` JPEG |
 | `GET` | `/api/scans/:id/report.pdf` | PDF report |
-| `GET` | `/api/scans/history` | Paginated history, filters (`grade`, `from`, `to`, `q`, `lot`, `sort`), summary |
+| `POST` | `/api/scans/:id/reanalyze` | Rerun Gemini on the stored original image without rerunning Grade A/B |
+| `GET` | `/api/scans/history` | Paginated history, filters (`grade`, `from`, `to`, `q`, `lot`, `sort`), summary, gated defect counts |
 | `GET` | `/api/scans/export.csv` | Filtered history with a summary block (`grade`, `from`, `to`, `q`, `lot`, `sort`) |
 | `GET` | `/api/scans/stats` | Aggregate statistics |
 | `POST` | `/api/lots` | Create a lot with optional manual prices, measured lot weight, and estimated average nut weight |
@@ -827,9 +876,13 @@ deliberately limited public assessment verification endpoint.
 
 A prediction response contains policy-filtered `gradeA`, `gradeB`, `gradeC`, `gradeD`,
 `totalCount`, `finalGrade`, and a `scan` object with `gradeCounts`, `supportedGrades`, `lot`,
-`detections`, `warnings`, and model metadata. Disabled grades and master-off output are
-removed before serialization. The `pricing` object always carries an explicit status and
-`totalValue: null` when no estimate is available.
+`detections`, `warnings`, model metadata, and (when enabled) `defects`. Disabled grades,
+disabled defect categories, and master-off output are removed before serialization. The
+`defects` object contains `analysisStatus`, `analysisMethod`, `model`, `analyzedAt`,
+`imageLevelOnly`, `localizationAvailable`, `affectedNutCountsAvailable`, `note`,
+`limitations`, `errorCode`, `error`, and enabled `categories`; each category has a status,
+explanation, `affectedNutCount` (normally `null`), and `countBasis`. The `pricing` object always
+carries an explicit status and `totalValue: null` when no estimate is available.
 
 Lot valuation uses the active pricing mode. A weight-based total is:
 
@@ -845,9 +898,10 @@ across all counted enabled grades before the weight-based portion is priced. The
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/settings` | Authenticated effective policy (master, visible grades, Gemini enabled/configured, pricing mode, currency) |
+| `GET` | `/api/settings` | Authenticated effective policy (master, visible grades, Gemini and defect switches, pricing mode, currency) |
 | `GET` | `/api/admin/settings` | Admin-only editable settings, policy, Gemini key status, and market status |
-| `PUT` | `/api/admin/settings/predictions` | Update master, grade, and Gemini advisory switches |
+| `PUT` | `/api/admin/settings/predictions` | Update master, grade, and Gemini-assisted analysis switches |
+| `PUT` | `/api/admin/settings/defects` | Update master defect detection and individual defect categories |
 | `PUT` | `/api/admin/settings/gemini` | Update Gemini model, timeout, retries, and input image maximum |
 | `PUT` | `/api/admin/settings/pricing` | Update mutual-exclusive pricing mode, currency, manual prices, and live market filters |
 | `GET` | `/api/admin/gemini/status` | Admin-only key counts, cooldown state, and non-secret configuration |
@@ -905,10 +959,16 @@ policy:
 - the processed model-input preview and annotated detection image are included only when
   master prediction is on, and the annotated image is included only when every
   model-supported grade is enabled (otherwise the boxes would reveal a hidden grade);
-- grade composition, confidence, quality, measurements, defects, detection tables, Gemini
-  advisory, and price sections are included only when their policy permits them;
+- grade composition, confidence, quality, measurements, detection tables, Gemini advisory,
+  enabled defect findings, and price sections are included only when their policy permits
+  them;
+- defect sections show Gemini image-level statuses, explanations, analysis method/time,
+  limitations, and the “not established” count message; disabled categories are not included,
+  and no bounding boxes or fabricated counts are added;
 - master off embeds only the original image plus a clear policy notice, with no grade,
-  count, percentage, confidence, chart, or price section;
+  count, percentage, confidence, chart, defect, or price section;
+- prediction and comparison PDFs return HTTP `409` with a useful message when the required
+  original image is missing, instead of generating a report without its evidence image;
 - images are normalized to upright JPEG before embedding: EXIF orientation is applied,
   WebP/animated inputs are decoded, transparency is flattened onto white, oversized files
   are bounded, and the original aspect ratio is preserved instead of stretching;
@@ -936,9 +996,9 @@ text sections are present.
 There are two rollback levels. Choose the least destructive one that solves the problem.
 
 **1. Behaviour-only rollback (recommended, keeps all history):** in Admin settings, turn
-**Master prediction off** and set pricing to **none**. This immediately removes grading and
-pricing output without deleting stored scans, lots, or manual records. A different admin can
-turn the features back on later.
+**Master prediction off**, turn **Master defect detection** off, and set pricing to **none**.
+This immediately removes grading, defect, and pricing output without deleting stored scans,
+lots, or manual records. A different admin can turn the features back on later.
 
 **2. Code rollback:** stop the API and client first. This feature was added on top of the
 preserved model and earlier uncommitted tuning work, so do not run a blanket
@@ -1076,15 +1136,17 @@ npm run build
 cd ..
 ```
 
-The server suite currently reports **78/78 passing checks** (`npm test`): **52/52 unit
-tests** and **26/26 integration entries**. The integration entries cover the 17-step manual
-grading workflow plus seven admin-policy scenarios (policy access, C/D/Gemini validation,
+The server suite currently reports **85/85 passing checks** (`node --test`): **58/58 unit
+tests** and **27/27 integration entries**. The integration entries cover the 17-step manual
+grading workflow plus eight admin-policy scenarios (policy access, C/D/Gemini validation,
 key-status secrecy, grade filtering across result/history/stats/CSV/annotated access,
-measured-weight lot pricing, master-off suppression across API/images/CSV/lots/PDF, and
-audit secrecy). Unit coverage includes inference normalisation, validation, CSV safety,
-search escaping, PDF policy gating, Gemini failover/cooldown/redaction, public AGMARKNET
-name resolution and weighted-average parsing, data.gov.in fallback, cache/stale/error
-redaction, C/D-only lot suppression, and measured-weight pricing.
+measured-weight lot pricing, defect gating across detail/history/stats/CSV/PDF and admin
+settings, master-off suppression across API/images/CSV/lots/PDF, and audit secrecy). Unit
+coverage includes inference normalisation, validation, CSV safety, search escaping, PDF and
+defect policy gating, strict Gemini defect schema parsing and count discarding, Gemini
+failover/cooldown/redaction, public AGMARKNET name resolution and weighted-average parsing,
+data.gov.in fallback, cache/stale/error redaction, C/D-only lot suppression, and
+measured-weight pricing.
 
 The integration workflows use `mongodb-memory-server` and a temporary upload directory, so
 they do not read or modify the application's configured MongoDB database. The MongoDB test
@@ -1132,8 +1194,15 @@ suite and may fail when an upstream service is unavailable.
   prediction off intentionally suppresses all output; a disabled grade is removed
   server-side even though its history remains stored.
 - **Cannot save C/D or master settings**: enabling C/D while master is on requires the
-  Gemini-assisted switch. The loader refuses a policy that would imply an unsupported C/D
-  detector.
+  Gemini-assisted analysis switch. The loader refuses a policy that would imply an unsupported
+  C/D detector.
+- **No defect findings**: verify master prediction, master defect detection, at least one
+  category, and Gemini-assisted analysis are all on. A blank or unavailable defect result is
+  not “not detected”; use **Retry analysis** when it is offered.
+- **Defect analysis says “Analysis unavailable”**: this is intentional when Gemini is
+  disabled, no server key is configured, the request times out, or the response fails schema
+  validation. Check Admin settings and `/api/admin/gemini/status`; the app will not invent a
+  “not detected” result.
 - **Gemini unavailable / keys cooling down**: configure `GEMINI_API_KEY` or
   `GEMINI_API_KEY_1..10` in `server\.env`, then restart the API. Check
   `/api/admin/gemini/status` for key counts and cooldown state; key values are intentionally
@@ -1173,7 +1242,13 @@ suite and may fail when an upstream service is unavailable.
   remain in MongoDB and become visible again if the policy is re-enabled.
 - PDF evidence follows the same policy. Disabling a model-supported grade hides the
   annotated image because its boxes would reveal that grade.
-- No defect model is bundled; defect sections state that detection was not evaluated.
+- Defect analysis is Gemini image-level review, not a validated defect detector or
+  segmentation model. It cannot provide defect locations, bounding boxes, verified
+  affected-nut counts, or fungal confirmation. A finding of suspected mold describes visible
+  mold-like appearance only. Localized defects and affected-nut counts remain unavailable
+  until a validated detector and labelled data are installed.
+- Missing Gemini analysis is reported as unavailable with a retry path; it is never
+  converted to “not detected”. Defect findings do not automatically downgrade Grade A/B.
 - Physical millimetre measurements are unavailable without camera calibration; only
   image-space box sizes are shown.
 - No verified held-out Grade A/B evaluation report is bundled for the preserved weights,

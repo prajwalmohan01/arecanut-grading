@@ -35,6 +35,23 @@ import {
 
 const EMPTY_FILTERS = { q: '', grade: '', from: '', to: '', sort: 'newest' };
 
+function defectRowLabel(defects) {
+  if (!defects || !defects.categories) return '—';
+  const entries = Object.values(defects.categories).filter((item) => item && item.status);
+  if (!entries.length) return '—';
+  if (defects.analysisStatus === 'unavailable') return 'Analysis unavailable';
+  const detected = entries.filter((item) => item.status === 'detected').map((item) => item.name);
+  if (detected.length) return detected.join(', ');
+  const uncertain = entries.filter((item) => item.status === 'uncertain').length;
+  if (uncertain) return `${uncertain} uncertain`;
+  return 'None detected';
+}
+
+function defectSummaryItems(defects) {
+  if (!defects || !defects.categories) return [];
+  return Object.values(defects.categories).filter((item) => item && item.status);
+}
+
 function FilterBar({ draft, setDraft, onApply, onReset, loading, grades }) {
   return (
     <Card className="p-4 sm:p-5 animate-in">
@@ -145,6 +162,7 @@ export default function History() {
   const toast = useToast();
   const { policy } = usePolicy();
   const gradingOn = policy?.masterEnabled !== false;
+  const defectOn = Boolean(policy?.defectDetectionEnabled);
   const enabledLetters = gradingOn
     ? Array.isArray(policy?.enabledLetters)
       ? policy.enabledLetters
@@ -404,6 +422,42 @@ export default function History() {
         </div>
       )}
 
+      {defectOn && data?.defects?.categories && (
+        <Card className="p-4 animate-in sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="font-display text-base font-semibold text-main">Defect findings</h3>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                Gemini image-level review across matching predictions. Counts show how many stored
+                analyses returned each status; they are not affected-nut counts.
+              </p>
+            </div>
+            <span className="pill">Image-level only</span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {defectSummaryItems(data.defects).map((category) => (
+              <div
+                key={category.key || category.name}
+                className="rounded-2xl bg-[color:var(--panel-soft)] p-3"
+              >
+                <p className="text-xs font-semibold text-main">{category.name}</p>
+                <p className="mt-1 text-[11px] text-muted">
+                  <span className="font-semibold text-danger">{category.detected || 0}</span>{' '}
+                  detected · {category.uncertain || 0} uncertain · {category.error || 0} unavailable
+                </p>
+                <p className="mt-1 text-[10px] text-muted">
+                  {category.not_detected || 0} not detected · {category.analyzed || 0} analysed
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] leading-relaxed text-muted">
+            No affected-nut count or defect location is shown because no validated defect detector
+            is installed. “Suspected mold” is not a confirmed fungal infection.
+          </p>
+        </Card>
+      )}
+
       <FilterBar
         draft={draft}
         setDraft={setDraft}
@@ -471,6 +525,7 @@ export default function History() {
                     {gradingOn && <th>Total</th>}
                     {gradingOn && <th>Quality</th>}
                     {gradingOn && <th>Confidence</th>}
+                    {defectOn && <th>Defects</th>}
                     <th>Date</th>
                     <th aria-label="Actions" />
                   </tr>
@@ -554,6 +609,11 @@ export default function History() {
                         )}
                         {gradingOn && (
                           <td className="text-sm text-main">{formatPercent(scan.confidence)}</td>
+                        )}
+                        {defectOn && (
+                          <td className="max-w-[11rem] text-xs text-muted">
+                            {defectRowLabel(scan.defects)}
+                          </td>
                         )}
                         <td className="whitespace-nowrap text-xs text-muted">
                           {formatDateTime(scan.createdAt)}
@@ -649,6 +709,11 @@ export default function History() {
                                 </span>
                               );
                             })}
+                          </p>
+                        )}
+                        {defectOn && (
+                          <p className="mt-1 text-[11px] text-muted">
+                            Defects: {defectRowLabel(scan.defects)}
                           </p>
                         )}
                         <div className="mt-2 flex flex-wrap gap-1.5">

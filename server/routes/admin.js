@@ -6,6 +6,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const {
   getSettings,
   updatePredictions,
+  updateDefects,
   updateGemini,
   updatePricing,
   listAudit,
@@ -27,6 +28,7 @@ function adminPayload(settings) {
     settings: {
       version: settings.version,
       predictions: settings.predictions,
+      defects: settings.defects,
       gemini: settings.gemini,
       pricing: settings.pricing,
       updatedAt: settings.updatedAt,
@@ -56,6 +58,18 @@ router.put(
     const settings = await updatePredictions(req.body || {}, req.user, meta(req));
     return res.json({
       message: 'Prediction display policy updated.',
+      ...adminPayload(settings),
+    });
+  })
+);
+
+// PUT /api/admin/settings/defects
+router.put(
+  '/settings/defects',
+  asyncHandler(async (req, res) => {
+    const settings = await updateDefects(req.body || {}, req.user, meta(req));
+    return res.json({
+      message: 'Defect detection display policy updated.',
       ...adminPayload(settings),
     });
   })

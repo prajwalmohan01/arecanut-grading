@@ -3,6 +3,11 @@
 const SystemSettings = require('../models/SystemSettings');
 const AdminAudit = require('../models/AdminAudit');
 const { config } = require('../config');
+const {
+  DEFECT_KEYS,
+  DEFECT_LABELS,
+  filterDefectAnalysis,
+} = require('./defectService');
 
 const GRADES = ['A', 'B', 'C', 'D'];
 const PRICE_UNITS = ['per_nut', 'per_kg', 'per_quintal'];
@@ -30,6 +35,15 @@ function defaultSettings() {
       masterEnabled: true,
       grades: { A: true, B: true, C: false, D: false },
       geminiEnabled: false,
+    },
+    defects: {
+      masterEnabled: false,
+      categories: {
+        blackSpots: true,
+        cracks: true,
+        mold: true,
+        discoloration: true,
+      },
     },
     gemini: {
       model: config.geminiModel,
@@ -71,6 +85,14 @@ function mergeDefaults(raw) {
       grades: {
         ...defaults.predictions.grades,
         ...((raw.predictions && raw.predictions.grades) || {}),
+      },
+    },
+    defects: {
+      ...defaults.defects,
+      ...(raw.defects || {}),
+      categories: {
+        ...defaults.defects.categories,
+        ...((raw.defects && raw.defects.categories) || {}),
       },
     },
     gemini: { ...defaults.gemini, ...(raw.gemini || {}) },
@@ -179,7 +201,7 @@ function normalizePredictions(input, current) {
 
   const geminiEnabled = booleanValue(
     input.geminiEnabled,
-    'Gemini-assisted prediction',
+    'Gemini-assisted analysis',
     Boolean(base.geminiEnabled)
   );
   const masterEnabled = booleanValue(
@@ -190,7 +212,7 @@ function normalizePredictions(input, current) {
 
   if (masterEnabled && (grades.C || grades.D) && !geminiEnabled) {
     throw new SettingsValidationError(
-      'Grade C/D review requires the Gemini-assisted prediction switch. No validated C/D detector is installed.'
+      'Grade C/D review requires the Gemini-assisted analysis switch. No validated C/D detector is installed.'
     );
   }
   if (masterEnabled && !GRADES.some((letter) => grades[letter])) {
@@ -200,6 +222,29 @@ function normalizePredictions(input, current) {
   }
 
   return { masterEnabled, grades, geminiEnabled };
+}
+
+function normalizeDefects(input, current) {
+  if (!input || typeof input !== 'object') {
+    throw new SettingsValidationError('Defect detection settings are required.');
+  }
+  const base = current.defects || defaultSettings().defects;
+  const rawCategories =
+    input.categories && typeof input.categories === 'object' ? input.categories : {};
+  const categories = {};
+  DEFECT_KEYS.forEach((key) => {
+    categories[key] = booleanValue(
+      rawCategories[key],
+      DEFECT_LABELS[key],
+      Boolean(base.categories && base.categories[key])
+    );
+  });
+  const masterEnabled = booleanValue(
+    input.masterEnabled,
+    'Master defect detection',
+    Boolean(base.masterEnabled)
+  );
+  return { masterEnabled, categories };
 }
 
 function normalizeGemini(input, current) {
@@ -396,6 +441,7 @@ async function persistSettings(settings, adminUser, action, summary, before, met
     {
       $set: {
         predictions: next.predictions,
+        defects: next.defects,
         gemini: next.gemini,
         pricing: next.pricing,
         version: next.version,
@@ -426,6 +472,25 @@ async function updatePredictions(input, adminUser, meta = {}) {
     `Prediction switches updated: master=${predictions.masterEnabled}, grades=${GRADES.filter(
       (letter) => predictions.grades[letter]
     ).join('') || 'none'}, gemini=${predictions.geminiEnabled}`,
+    current,
+    meta
+  );
+}
+
+async function updateDefects(input, adminUser, meta = {}) {
+  const current = await getSettings({ fresh: true });
+  const defects = normalizeDefects(input, current);
+  const next = { ...current, defects };
+  const enabled = DEFECT_KEYS.filter((key) => defects.categories[key]).map(
+    (key) => DEFECT_LABELS[key]
+  );
+  return persistSettings(
+    next,
+    adminUser,
+    'defects_updated',
+    `Defect detection switches updated: master=${defects.masterEnabled}, categories=${
+      enabled.join(', ') || 'none'
+    }`,
     current,
     meta
   );
@@ -466,6 +531,15 @@ function settingsSnapshot(settings) {
     grades: clone(settings.predictions.grades),
     geminiEnabled: Boolean(settings.predictions.geminiEnabled),
     geminiModel: settings.gemini.model,
+    defectDetectionEnabled: Boolean(
+      settings.predictions.masterEnabled &&
+        settings.defects &&
+        settings.defects.masterEnabled
+    ),
+    defectCategories: clone(
+      (settings.defects && settings.defects.categories) ||
+        defaultSettings().defects.categories
+    ),
     pricingMode: settings.pricing.mode,
     currency: settings.pricing.currency,
   };
@@ -476,12 +550,32 @@ function buildPolicy(settings) {
   const enabledLetters = masterEnabled
     ? GRADES.filter((letter) => settings.predictions.grades[letter])
     : [];
+  const defectSettings = settings.defects || defaultSettings().defects;
+  const defectMasterEnabled = Boolean(
+    masterEnabled && defectSettings.masterEnabled
+  );
+  const defectCategories = clone(defectSettings.categories || {});
+  const enabledDefectCategories = defectMasterEnabled
+    ? DEFECT_KEYS.filter((key) => defectCategories[key])
+    : [];
+  const defectDetectionEnabled = enabledDefectCategories.length > 0;
+  const geminiEnabled = Boolean(
+    masterEnabled && settings.predictions.geminiEnabled
+  );
   return {
     version: settings.version || 1,
     masterEnabled,
     enabledLetters,
     grades: clone(settings.predictions.grades),
-    geminiEnabled: Boolean(masterEnabled && settings.predictions.geminiEnabled),
+    geminiEnabled,
+    defectDetectionEnabled,
+    defectCategories,
+    enabledDefectCategories,
+    defectGeminiEnabled: Boolean(
+      defectDetectionEnabled &&
+        enabledDefectCategories.length > 0 &&
+        geminiEnabled
+    ),
     pricingMode: masterEnabled ? settings.pricing.mode : 'none',
   };
 }
@@ -551,6 +645,8 @@ function applyScanPolicy(scan, settings) {
     result.confidenceMethod = null;
     result.measurements = null;
     result.defects = null;
+    result.defectDetectionEnabled = false;
+    result.enabledDefectCategories = [];
     result.warnings = [];
     result.finalGradeSource = 'none';
     if (hadDetections) result.detections = [];
@@ -578,6 +674,15 @@ function applyScanPolicy(scan, settings) {
     };
     return result;
   }
+
+  const enabledDefectKeys = policy.enabledDefectCategories || [];
+  result.defectDetectionEnabled = enabledDefectKeys.length > 0;
+  result.enabledDefectCategories = enabledDefectKeys;
+  result.defects = enabledDefectKeys.length
+    ? filterDefectAnalysis(result.defects, enabledDefectKeys, {
+        model: settings.gemini && settings.gemini.model,
+      })
+    : null;
 
   const availability = {};
   const visibleCounts = {};
@@ -673,10 +778,20 @@ function applyScanPolicy(scan, settings) {
   }
 
   if (Array.isArray(result.warnings)) {
+    const disabledDefectPatterns = DEFECT_KEYS.filter(
+      (key) => !enabledDefectKeys.includes(key)
+    ).map(
+      (key) =>
+        new RegExp(
+          DEFECT_LABELS[key].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+          'i'
+        )
+    );
     result.warnings = result.warnings.filter((warning) => {
       const text = String(warning);
       if (!policy.enabledLetters.includes('C') && /grade\s*c/i.test(text)) return false;
       if (!policy.enabledLetters.includes('D') && /grade\s*d/i.test(text)) return false;
+      if (disabledDefectPatterns.some((pattern) => pattern.test(text))) return false;
       return true;
     });
   }
@@ -727,8 +842,10 @@ module.exports = {
   defaultSettings,
   getSettings,
   updatePredictions,
+  updateDefects,
   updateGemini,
   updatePricing,
+  DEFECT_KEYS,
   settingsSnapshot,
   buildPolicy,
   applyScanPolicy,

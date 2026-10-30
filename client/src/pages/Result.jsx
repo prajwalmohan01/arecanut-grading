@@ -44,6 +44,17 @@ const IMAGE_TABS = [
   { key: 'processed', label: 'Processed Image' },
 ];
 
+const DEFECT_STATUS = {
+  detected: { label: 'Detected', badge: 'badge-danger' },
+  not_detected: { label: 'Not detected', badge: 'badge-a' },
+  uncertain: { label: 'Uncertain', badge: 'badge-b' },
+  error: { label: 'Analysis unavailable', badge: 'badge-invalid' },
+};
+
+function defectStatusMeta(status) {
+  return DEFECT_STATUS[status] || { label: 'Analysis unavailable', badge: 'badge-invalid' };
+}
+
 function toneVars(grade) {
   if (grade === 'Grade A') {
     return { bg: 'var(--accent-soft)', border: 'rgba(47,125,91,0.3)', color: 'var(--accent)' };
@@ -90,6 +101,7 @@ export default function Result() {
   const [weightInput, setWeightInput] = useState('');
   const [appliedWeightKg, setAppliedWeightKg] = useState('');
   const [applyingWeight, setApplyingWeight] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
 
   function loadScan(weightKg) {
     if (!scanId) return Promise.resolve();
@@ -197,6 +209,28 @@ export default function Result() {
     }
   }
 
+  async function reanalyzeDefects() {
+    if (!scan) return;
+    setReanalyzing(true);
+    try {
+      const response = await API.post(`/scans/${scan.id}/reanalyze`, {
+        weightKg: appliedWeightKg || undefined,
+      });
+      if (response.data?.scan) setScan(response.data.scan);
+      if (response.data?.analysisUnavailable) {
+        toast.info(response.data.message || 'Defect analysis is unavailable.');
+      } else if (response.data?.success === false) {
+        toast.info(response.data.message || 'Defect analysis completed with limitations.');
+      } else {
+        toast.success(response.data?.message || 'Defect analysis refreshed.');
+      }
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Could not retry defect analysis.'));
+    } finally {
+      setReanalyzing(false);
+    }
+  }
+
   async function removeScan() {
     if (!scan) return;
     setDeleting(true);
@@ -279,6 +313,18 @@ export default function Result() {
   const detections = scan.detections || [];
   const measurements = scan.measurements;
   const defects = scan.defects;
+  const defectDetectionOn = Boolean(
+    scan.defectDetectionEnabled ?? policy?.defectDetectionEnabled
+  );
+  const defectEntries =
+    defects && defects.categories && typeof defects.categories === 'object'
+      ? Object.values(defects.categories).filter((item) => item && item.status)
+      : [];
+  const defectRetryAvailable =
+    defectDetectionOn &&
+    policy?.geminiEnabled !== false &&
+    (defects?.analysisStatus === 'unavailable' ||
+      defectEntries.some((item) => item.status === 'error'));
   const warnings = scan.warnings || [];
 
   return (
@@ -763,22 +809,111 @@ export default function Result() {
             </Card>
           )}
 
-          {gradingOn && (
+          {defectDetectionOn && (
             <Card className="p-5 animate-in">
-              <h3 className="font-display text-base font-semibold text-main">Defect analysis</h3>
-              <p className="mt-2 text-sm leading-relaxed text-muted">
-                {defects?.reason ||
-                  'Defect detection is not supported by the preserved two-class model.'}
-              </p>
-              {Array.isArray(defects?.categories) && defects.categories.length > 0 && (
-                <ul className="mt-3 space-y-1.5">
-                  {defects.categories.map((category) => (
-                    <li key={category.name} className="flex items-center justify-between gap-2 text-xs">
-                      <span className="text-muted">{category.name}</span>
-                      <span className="badge badge-neutral">Not supported</span>
-                    </li>
-                  ))}
-                </ul>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-display text-base font-semibold text-main">
+                    Defect analysis
+                  </h3>
+                  <p className="mt-1 text-[11px] leading-relaxed text-muted">
+                    Gemini image-level review. Findings are separate from grading and never
+                    downgrade a grade automatically.
+                  </p>
+                </div>
+                {defectRetryAvailable && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={reanalyzeDefects}
+                    disabled={reanalyzing}
+                  >
+                    {reanalyzing ? <Spinner size={13} /> : <SparkIcon width={14} height={14} />}
+                    {reanalyzing ? 'Retrying…' : 'Retry analysis'}
+                  </Button>
+                )}
+              </div>
+
+              {defectEntries.length === 0 ? (
+                <p className="mt-3 text-sm leading-relaxed text-muted">
+                  No defect analysis is stored for this prediction. Use retry to run Gemini against
+                  the stored original image.
+                </p>
+              ) : (
+                <>
+                  <div className="mt-3 flex flex-wrap gap-2 text-[10px] text-muted">
+                    <span className="pill">
+                      {defects.analysisStatus === 'success'
+                        ? 'Analysis complete'
+                        : defects.analysisStatus === 'partial'
+                        ? 'Partially complete'
+                        : 'Analysis unavailable'}
+                    </span>
+                    {defects.analyzedAt && (
+                      <span className="pill">{formatDateTime(defects.analyzedAt)}</span>
+                    )}
+                    {defects.model && <span className="pill">{defects.model}</span>}
+                  </div>
+
+                  {defects.error && (
+                    <div className="alert alert-danger mt-3 items-start text-xs leading-relaxed">
+                      <AlertIcon width={15} height={15} />
+                      <span>{defects.error}</span>
+                    </div>
+                  )}
+
+                  <ul className="mt-3 space-y-3">
+                    {defectEntries.map((category) => {
+                      const meta = defectStatusMeta(category.status);
+                      return (
+                        <li
+                          key={category.key || category.name}
+                          className="rounded-2xl border border-[color:var(--border)] bg-[color:var(--panel-soft)] p-3"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-xs font-semibold text-main">
+                              {category.name}
+                            </span>
+                            <span className={`badge ${meta.badge}`}>{meta.label}</span>
+                          </div>
+                          <p className="mt-1.5 text-[11px] leading-relaxed text-muted">
+                            {category.explanation}
+                          </p>
+                          {Number.isInteger(category.affectedNutCount) &&
+                            category.countBasis === 'validated_detector' && (
+                              <p className="mt-1 text-[10px] font-semibold text-main">
+                                Affected nuts: {formatNumber(category.affectedNutCount)}
+                              </p>
+                            )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+
+                  {defects.limitations?.length > 0 && (
+                    <div className="mt-3 rounded-2xl bg-[color:var(--panel-soft)] p-3">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-muted">
+                        Limitations
+                      </p>
+                      <ul className="mt-1.5 space-y-1 text-[11px] leading-relaxed text-muted">
+                        {defects.limitations.map((item) => (
+                          <li key={item}>• {item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <p className="mt-3 text-[10px] leading-relaxed text-muted">
+                    {defects.note ||
+                      'Image-level findings only. No defect location, bounding box, verified affected-nut count, or fungal confirmation is claimed.'}
+                  </p>
+                  {!policy?.geminiEnabled && (
+                    <p className="mt-2 text-[10px] font-semibold text-danger">
+                      Gemini-assisted analysis is disabled by the administrator. Ask an administrator
+                      to enable it before retrying.
+                    </p>
+                  )}
+                </>
               )}
             </Card>
           )}

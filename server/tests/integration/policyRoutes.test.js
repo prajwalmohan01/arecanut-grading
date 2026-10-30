@@ -173,7 +173,7 @@ test('admin policy, pricing, lot, and PDF routes honor display rules', async (t)
       geminiEnabled: false,
     });
     assert.equal(response.status, 400);
-    assert.match(response.body.error, /Gemini-assisted prediction switch/);
+    assert.match(response.body.error, /Gemini-assisted analysis switch/);
 
     const allowed = await authed(
       request(app).put('/api/admin/settings/predictions'),
@@ -394,6 +394,181 @@ test('admin policy, pricing, lot, and PDF routes honor display rules', async (t)
       userToken
     );
     assert.equal(annotated.status, 200);
+  });
+
+  await t.test('defect switches filter detail, history, stats, CSV, and PDF output', async () => {
+    const update = await authed(
+      request(app).put('/api/admin/settings/defects'),
+      adminToken
+    ).send({
+      masterEnabled: true,
+      categories: {
+        blackSpots: true,
+        cracks: false,
+        mold: true,
+        discoloration: false,
+      },
+    });
+    assert.equal(update.status, 200, JSON.stringify(update.body));
+    assert.equal(update.body.policy.defectDetectionEnabled, true);
+    assert.deepEqual(update.body.policy.enabledDefectCategories, ['blackSpots', 'mold']);
+
+    await Scan.updateOne(
+      { _id: scanA._id },
+      {
+        $set: {
+          defects: {
+            analysisStatus: 'success',
+            analysisMethod: 'gemini_vision',
+            model: 'gemini-test',
+            analyzedAt: new Date('2026-10-30T10:00:00Z'),
+            latencyMs: 120,
+            imageLevelOnly: true,
+            localizationAvailable: false,
+            affectedNutCountsAvailable: false,
+            note: 'Image-level findings only.',
+            limitations: ['Cracks are hard to see in this lighting.', 'Counts require a detector.'],
+            categories: {
+              blackSpots: {
+                key: 'blackSpots',
+                name: 'Black Spots',
+                status: 'detected',
+                affectedNutCount: 9,
+                countBasis: 'not_established',
+                explanation: 'Dark patches are visible on several nuts.',
+              },
+              cracks: {
+                key: 'cracks',
+                name: 'Cracks',
+                status: 'detected',
+                affectedNutCount: 2,
+                countBasis: 'not_established',
+                explanation: 'Micro-fractures are visible.',
+              },
+              mold: {
+                key: 'mold',
+                name: 'Suspected Mold',
+                status: 'uncertain',
+                affectedNutCount: null,
+                countBasis: 'not_established',
+                explanation: 'A pale patch may be mold-like growth.',
+              },
+              discoloration: {
+                key: 'discoloration',
+                name: 'Discoloration',
+                status: 'not_detected',
+                affectedNutCount: null,
+                countBasis: 'not_established',
+                explanation: 'Colour variation looks natural.',
+              },
+            },
+          },
+        },
+      }
+    );
+
+    const detail = await authed(
+      request(app).get(`/api/scans/${scanA._id}`),
+      userToken
+    );
+    assert.equal(detail.status, 200, JSON.stringify(detail.body));
+    assert.equal(detail.body.scan.defectDetectionEnabled, true);
+    assert.deepEqual(Object.keys(detail.body.scan.defects.categories), [
+      'blackSpots',
+      'mold',
+    ]);
+    assert.equal(
+      detail.body.scan.defects.categories.blackSpots.affectedNutCount,
+      null
+    );
+    assert.equal(JSON.stringify(detail.body.scan).includes('Micro-fractures'), false);
+    assert.equal(JSON.stringify(detail.body.scan).includes('Colour variation'), false);
+
+    const history = await authed(
+      request(app).get('/api/scans/history?limit=10'),
+      userToken
+    );
+    assert.equal(history.status, 200, JSON.stringify(history.body));
+    assert.deepEqual(history.body.summary.defects.categories.blackSpots.detected, 1);
+    assert.deepEqual(history.body.summary.defects.categories.mold.uncertain, 1);
+    assert.equal(
+      'cracks' in history.body.summary.defects.categories,
+      false
+    );
+
+    const stats = await authed(request(app).get('/api/scans/stats'), userToken);
+    assert.equal(stats.status, 200, JSON.stringify(stats.body));
+    assert.equal(stats.body.defects.categories.blackSpots.detected, 1);
+    assert.equal('cracks' in stats.body.defects.categories, false);
+
+    const csv = await authed(
+      request(app).get('/api/scans/export.csv'),
+      userToken
+    );
+    assert.equal(csv.status, 200);
+    assert.match(csv.text, /Defect analysis,Gemini image-level review/);
+    assert.match(csv.text, /Black Spots status/);
+    assert.match(csv.text, /Suspected Mold status/);
+    assert.doesNotMatch(csv.text, /Cracks status/);
+    assert.doesNotMatch(csv.text, /Discoloration status/);
+    assert.doesNotMatch(csv.text, /Micro-fractures/);
+
+    const report = await authed(
+      request(app)
+        .get(`/api/scans/${scanA._id}/report.pdf`)
+        .buffer(true)
+        .parse(binaryParser),
+      userToken
+    );
+    assert.equal(report.status, 200);
+    const text = await pdfText(report.body);
+    assert.match(text, /DEFECT ANALYSIS \(GEMINI IMAGE-LEVEL REVIEW\)/);
+    assert.match(text, /Black Spots/);
+    assert.match(text, /Suspected Mold/);
+    assert.doesNotMatch(text, /Micro-fractures/);
+    assert.doesNotMatch(text, /Colour variation/);
+
+    const disabled = await authed(
+      request(app).put('/api/admin/settings/defects'),
+      adminToken
+    ).send({
+      masterEnabled: false,
+      categories: {
+        blackSpots: true,
+        cracks: true,
+        mold: true,
+        discoloration: true,
+      },
+    });
+    assert.equal(disabled.status, 200, JSON.stringify(disabled.body));
+    assert.equal(disabled.body.policy.defectDetectionEnabled, false);
+
+    const hiddenDetail = await authed(
+      request(app).get(`/api/scans/${scanA._id}`),
+      userToken
+    );
+    assert.equal(hiddenDetail.body.scan.defects, null);
+    assert.equal(hiddenDetail.body.scan.defectDetectionEnabled, false);
+
+    const hiddenHistory = await authed(
+      request(app).get('/api/scans/history'),
+      userToken
+    );
+    assert.equal(hiddenHistory.body.summary.defects, undefined);
+    assert.ok(hiddenHistory.body.items.every((item) => item.defects === null));
+
+    const hiddenStats = await authed(
+      request(app).get('/api/scans/stats'),
+      userToken
+    );
+    assert.equal(hiddenStats.body.defects, undefined);
+
+    const hiddenCsv = await authed(
+      request(app).get('/api/scans/export.csv'),
+      userToken
+    );
+    assert.doesNotMatch(hiddenCsv.text, /Defect analysis/);
+    assert.doesNotMatch(hiddenCsv.text, /Black Spots status/);
   });
 
   await t.test('master off suppresses grading, output images, pricing, CSV, lot valuation, and PDF content', async () => {

@@ -2,6 +2,7 @@
 
 const PDFDocument = require('pdfkit');
 const { normalizeForPdf } = require('./imageNormalizer');
+const { DEFECT_LABELS } = require('../services/defectService');
 
 const COLORS = {
   forest: '#1F5136',
@@ -209,46 +210,123 @@ function addWarnings(doc, warnings) {
   doc.moveDown(0.4);
 }
 
+const DEFECT_STATUS_LABELS = {
+  detected: 'Detected',
+  not_detected: 'Not detected',
+  uncertain: 'Uncertain',
+  error: 'Analysis unavailable',
+};
+
+function defectStatusColor(status) {
+  if (status === 'detected') return COLORS.danger;
+  if (status === 'uncertain') return COLORS.gold;
+  if (status === 'error') return COLORS.danger;
+  return COLORS.emerald;
+}
+
 function addDefects(doc, defects) {
-  sectionTitle(doc, 'Defect analysis');
-  if (!defects || !defects.supported) {
+  if (
+    !defects ||
+    typeof defects !== 'object' ||
+    !defects.categories ||
+    typeof defects.categories !== 'object' ||
+    Array.isArray(defects.categories)
+  ) {
+    return;
+  }
+  const entries = Object.values(defects.categories).filter(
+    (item) => item && item.status
+  );
+  if (!entries.length) return;
+
+  sectionTitle(doc, 'Defect analysis (Gemini image-level review)');
+  keyValue(doc, 'Analysis status', defects.analysisStatus || 'unknown', {
+    width: 500,
+    color:
+      defects.analysisStatus === 'unavailable' || defects.analysisStatus === 'error'
+        ? COLORS.danger
+        : COLORS.charcoal,
+  });
+  keyValue(doc, 'Analysis method', 'Gemini vision, image-level', { width: 500 });
+  keyValue(doc, 'Model', safe(defects.model), { width: 500 });
+  keyValue(doc, 'Analyzed at', formatDate(defects.analyzedAt), { width: 500 });
+  if (defects.error) {
+    keyValue(doc, 'Reason', defects.error, { width: 500, color: COLORS.danger });
+  }
+
+  entries.forEach((item) => {
+    keyValue(doc, item.name || item.key || 'Defect', DEFECT_STATUS_LABELS[item.status] || item.status, {
+      width: 500,
+      color: defectStatusColor(item.status),
+    });
+    doc
+      .font('Helvetica')
+      .fontSize(8.3)
+      .fillColor(COLORS.charcoal)
+      .text(safe(item.explanation), 153, doc.y, {
+        width: doc.page.width - 201,
+      });
+    keyValue(
+      doc,
+      'Affected nuts',
+      Number.isInteger(item.affectedNutCount)
+        ? String(item.affectedNutCount)
+        : 'Not established (requires a validated detector)',
+      {
+        width: 500,
+        color: Number.isInteger(item.affectedNutCount)
+          ? COLORS.charcoal
+          : COLORS.muted,
+      }
+    );
+    doc.moveDown(0.2);
+  });
+
+  if (Array.isArray(defects.limitations) && defects.limitations.length) {
     doc
       .font('Helvetica-Bold')
-      .fontSize(9)
-      .fillColor(COLORS.danger)
-      .text('Not supported by the preserved model', 48, doc.y);
-    doc.moveDown(0.3);
-    doc
-      .font('Helvetica')
       .fontSize(8.5)
-      .fillColor(COLORS.charcoal)
-      .text(
-        safe(
-          defects && defects.reason,
-          'No defect classification model is available.'
-        ),
-        48,
-        doc.y,
-        { width: doc.page.width - 96 }
-      );
-  } else {
-    doc
-      .font('Helvetica')
-      .fontSize(8.5)
-      .fillColor(COLORS.charcoal)
-      .text('Defect results were produced by a compatible model.', 48, doc.y);
-    const items = defects.items || [];
-    items.forEach((item) => {
-      doc.text(
-        `• ${safe(item.name)}: ${safe(item.status)} (${safe(
-          item.confidence
-        )})`,
-        52,
-        doc.y
-      );
+      .fillColor(COLORS.muted)
+      .text('Limitations', 48, doc.y);
+    doc.moveDown(0.2);
+    doc.font('Helvetica').fontSize(8.3).fillColor(COLORS.charcoal);
+    defects.limitations.forEach((item) => {
+      doc.text(`• ${safe(item)}`, 52, doc.y, {
+        width: doc.page.width - 104,
+      });
+      doc.moveDown(0.2);
     });
   }
+  doc
+    .font('Helvetica-Oblique')
+    .fontSize(8)
+    .fillColor(COLORS.danger)
+    .text(
+      safe(
+        defects.note,
+        'Image-level visual findings only. No defect location, bounding box, verified affected-nut count, or fungal confirmation is claimed.'
+      ),
+      48,
+      doc.y,
+      { width: doc.page.width - 96 }
+    );
   doc.moveDown(0.7);
+}
+
+function defectSummaryLine(defects) {
+  if (!defects || !defects.categories) return 'Not available';
+  const entries = Object.values(defects.categories).filter((item) => item && item.status);
+  if (!entries.length) return 'Not available';
+  const detected = entries
+    .filter((item) => item.status === 'detected')
+    .map((item) => item.name);
+  const uncertain = entries.filter((item) => item.status === 'uncertain').length;
+  const unavailable = entries.filter((item) => item.status === 'error').length;
+  const parts = [];
+  if (detected.length) parts.push(`Detected: ${detected.join(', ')}`);
+  if (uncertain) parts.push(`${uncertain} uncertain`);
+  if (unavailable) parts.push(`${unavailable} unavailable`);
+  return parts.length ? parts.join(' · ') : 'None detected';
 }
 
 function addMeasurements(doc, measurements) {
@@ -370,7 +448,11 @@ function addGeminiAdvisory(doc, advisory) {
   keyValue(doc, 'Image-level hint', advisory.gradeHint || 'No hint', {
     width: 500,
   });
+  keyValue(doc, 'Analysis method', 'Gemini vision, image-level', { width: 500 });
   keyValue(doc, 'Model', advisory.model || 'Not available', { width: 500 });
+  if (advisory.analyzedAt) {
+    keyValue(doc, 'Analyzed at', formatDate(advisory.analyzedAt), { width: 500 });
+  }
   keyValue(doc, 'Advisory only', 'Yes — no Grade C/D counts or bounding boxes', {
     width: 500,
     color: COLORS.danger,
@@ -531,6 +613,21 @@ function addPolicySummary(doc, scan) {
       : 'None',
     { width: 500 }
   );
+  if (policy.defectDetectionEnabled) {
+    keyValue(doc, 'Defect detection', 'On (Gemini image-level review)', {
+      width: 500,
+    });
+    keyValue(
+      doc,
+      'Enabled defects',
+      Array.isArray(policy.enabledDefectCategories)
+        ? policy.enabledDefectCategories
+            .map((key) => DEFECT_LABELS[key] || key)
+            .join(', ')
+        : 'None',
+      { width: 500 }
+    );
+  }
   keyValue(doc, 'Pricing mode', policy.pricingMode || 'none', { width: 500 });
   keyValue(doc, 'Policy version', policy.version || '—', { width: 500 });
   doc.moveDown(0.4);
@@ -732,8 +829,9 @@ async function buildPredictionReport(scan, images = {}, options = {}) {
     doc.moveDown(0.5);
   }
 
+  addDefects(doc, scan.defects);
+
   if (gradingEnabled) {
-    addDefects(doc, scan.defects);
     addMeasurements(doc, scan.measurements);
     addDetections(doc, scan.detections);
     addGeminiAdvisory(doc, scan.geminiAdvisory);
@@ -831,6 +929,9 @@ async function buildComparisonReport(scans, imageSets = [], options = {}) {
                 : `${Number(scan.qualityScore).toFixed(1)} / 100 (heuristic)`,
           ],
           ['Detected nuts', (scan) => gradeCountsText(scan)],
+          ...(scans.some((scan) => scan.defects)
+            ? [['Defect findings', (scan) => defectSummaryLine(scan.defects)]]
+            : []),
           [
             'Avg aspect ratio',
             (scan) =>
@@ -922,6 +1023,7 @@ async function buildComparisonReport(scans, imageSets = [], options = {}) {
         );
       }
     }
+    addDefects(doc, scan.defects);
     if (gradingEnabled && scan.geminiAdvisory) {
       addGeminiAdvisory(doc, scan.geminiAdvisory);
     }

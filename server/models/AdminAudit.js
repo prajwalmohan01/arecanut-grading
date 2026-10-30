@@ -16,6 +16,7 @@ const adminAuditSchema = new mongoose.Schema(
       enum: [
         'settings_initialized',
         'predictions_updated',
+        'defects_updated',
         'gemini_updated',
         'pricing_updated',
       ],

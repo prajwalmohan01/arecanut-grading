@@ -36,6 +36,9 @@ router.get(
         configured: configuredKeyCount() > 0,
         model: settings.gemini.model,
         advisoryOnly: true,
+        imageLevelOnly: true,
+        localizationAvailable: false,
+        affectedNutCountsAvailable: false,
       },
     });
   })

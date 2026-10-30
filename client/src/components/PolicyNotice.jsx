@@ -1,6 +1,13 @@
 import { usePolicy } from '../context/PolicyContext';
 import { AlertIcon, SparkIcon } from './Icons';
 
+const DEFECT_LABELS = {
+  blackSpots: 'black spots',
+  cracks: 'cracks',
+  mold: 'suspected mold',
+  discoloration: 'discoloration',
+};
+
 export default function PolicyNotice({ policy: suppliedPolicy, className = '', showPricing = false }) {
   const { policy: contextPolicy } = usePolicy();
   const policy = suppliedPolicy || contextPolicy;
@@ -25,8 +32,18 @@ export default function PolicyNotice({ policy: suppliedPolicy, className = '', s
   const letters = Array.isArray(policy.enabledLetters) ? policy.enabledLetters : [];
   const advisoryGrades = letters.filter((letter) => ['C', 'D'].includes(letter));
   const showAdvisoryNote = advisoryGrades.length > 0 && policy.geminiEnabled;
+  const enabledDefects = Array.isArray(policy.enabledDefectCategories)
+    ? policy.enabledDefectCategories
+    : [];
+  const showDefectNote = Boolean(policy.defectDetectionEnabled && enabledDefects.length);
 
-  if (!showAdvisoryNote && (!showPricing || policy.pricingMode !== 'none')) return null;
+  if (
+    !showAdvisoryNote &&
+    !showDefectNote &&
+    (!showPricing || policy.pricingMode !== 'none')
+  ) {
+    return null;
+  }
 
   return (
     <div className={`alert items-start text-[11px] leading-relaxed text-muted ${className}`}>
@@ -37,6 +54,15 @@ export default function PolicyNotice({ policy: suppliedPolicy, className = '', s
             Grade {advisoryGrades.join(' / Grade ')} is enabled for Gemini-assisted visual review
             only. Gemini is not an object detector: it does not create per-nut counts, bounding
             boxes, or confidence values.
+            {(showDefectNote || (showPricing && policy.pricingMode === 'none')) ? ' ' : ''}
+          </>
+        )}
+        {showDefectNote && (
+          <>
+            Defect review covers {enabledDefects.map((key) => DEFECT_LABELS[key] || key).join(', ')}
+            {' '}at image level only. &ldquo;Suspected Mold&rdquo; is not a confirmed fungal
+            infection. Affected-nut counts and defect locations require a validated detector and
+            are not claimed.
             {showPricing && policy.pricingMode === 'none' ? ' ' : ''}
           </>
         )}

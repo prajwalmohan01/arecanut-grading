@@ -3,6 +3,11 @@
 const crypto = require('crypto');
 const { config } = require('../config');
 const { normalizeForGemini } = require('../utils/imageNormalizer');
+const {
+  DEFECT_KEYS,
+  DEFECT_LABELS,
+  buildGeminiDefectAnalysis,
+} = require('./defectService');
 
 const DEFAULT_COOLDOWN_MS = Math.max(Number(config.geminiCooldownMs) || 60000, 5000);
 const KEY_ENV_NAMES = [
@@ -121,6 +126,7 @@ function getKeyStatuses() {
     const cooling = state.coolingUntil > Date.now();
     return {
       label: key.label,
+      fingerprint: key.fingerprint,
       configured: true,
       state: cooling ? 'cooling_down' : state.lastError ? 'degraded' : 'available',
       coolingUntil: cooling ? new Date(state.coolingUntil).toISOString() : null,
@@ -154,12 +160,39 @@ function geminiStatus(settings) {
       config.geminiImageMaxDimension,
     keys: statuses,
     advisoryOnly: true,
+    imageLevelOnly: true,
+    localizationAvailable: false,
+    affectedNutCountsAvailable: false,
     note:
-      'Gemini keys are read only from server environment variables. Key values are never returned by the API or written to audit logs.',
+      'Gemini provides image-level visual review only. It is not a validated defect detector and never creates affected-nut counts, bounding boxes, or confidence values. Key values are read only from server environment variables and are never returned by the API or written to audit logs.',
   };
 }
 
-const RESPONSE_SCHEMA = {
+const DEFECT_ITEM_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    status: {
+      type: 'STRING',
+      enum: ['detected', 'not_detected', 'uncertain', 'error'],
+      description:
+        'detected = visibly present; not_detected = image usable and no visible evidence; uncertain = ambiguous or obscured; error = category could not be assessed.',
+    },
+    explanation: {
+      type: 'STRING',
+      description:
+        'One short, concrete visual explanation. Never identify a fungus or claim a laboratory confirmation.',
+    },
+    affectedNutCount: {
+      type: 'INTEGER',
+      nullable: true,
+      description:
+        'Always null. This image-level review cannot establish a verified affected-nut count; the application discards any count.',
+    },
+  },
+  required: ['status', 'explanation'],
+};
+
+const BASE_RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
     imageUsable: { type: 'BOOLEAN' },
@@ -180,6 +213,28 @@ const RESPONSE_SCHEMA = {
   required: ['imageUsable', 'gradeHint', 'evidence', 'limitations', 'containsMixedGrades'],
 };
 
+function buildResponseSchema(includeDefects = false) {
+  if (!includeDefects) return BASE_RESPONSE_SCHEMA;
+  const defectProperties = {};
+  DEFECT_KEYS.forEach((key) => {
+    defectProperties[key] = DEFECT_ITEM_SCHEMA;
+  });
+  return {
+    ...BASE_RESPONSE_SCHEMA,
+    properties: {
+      ...BASE_RESPONSE_SCHEMA.properties,
+      defects: {
+        type: 'OBJECT',
+        properties: defectProperties,
+        required: DEFECT_KEYS,
+      },
+    },
+    required: [...BASE_RESPONSE_SCHEMA.required, 'defects'],
+  };
+}
+
+const RESPONSE_SCHEMA = buildResponseSchema(true);
+
 function buildPrompt(context = {}) {
   const supported = Array.isArray(context.supportedGrades)
     ? context.supportedGrades.join(', ')
@@ -188,11 +243,19 @@ function buildPrompt(context = {}) {
     context.counts && typeof context.counts === 'object'
       ? JSON.stringify(context.counts)
       : 'not supplied';
-  return [
+  const includeDefects = Boolean(context.includeDefects);
+  const enabledDefects =
+    Array.isArray(context.enabledDefectCategories) &&
+    context.enabledDefectCategories.length
+      ? context.enabledDefectCategories
+          .map((key) => DEFECT_LABELS[key] || key)
+          .join(', ')
+      : 'all four categories';
+  const lines = [
     'You are an independent visual reviewer for arecanut (betel nut) quality.',
-    'This is an image-level advisory review only. You are not an object detector.',
-    'Do NOT estimate or invent nut counts, bounding boxes, or numerical confidence.',
-    'Do NOT claim calibration or a validated grading accuracy.',
+    'This is an image-level review. You are not an object detector or a segmentation model.',
+    'Do NOT estimate or invent nut counts, bounding boxes, affected-nut counts, or numerical confidence.',
+    'Do NOT claim calibration, laboratory testing, or a validated grading accuracy.',
     'The existing detector supports these grades: ' + supported + '.',
     'Existing detector counts: ' + counts + '.',
     '',
@@ -208,11 +271,79 @@ function buildPrompt(context = {}) {
     '- Use short evidence items; do not guess hidden or off-frame nuts.',
     '- If the image contains mixed quality, set containsMixedGrades=true and still return one overall image-level hint.',
     '- If the image is not arecanut, is too blurry, or is too dark, set imageUsable=false and gradeHint="unknown".',
-    '- Return only JSON matching the supplied schema.',
-  ].join('\n');
+  ];
+
+  if (includeDefects) {
+    lines.push(
+      '',
+      'Defect review:',
+      '- Review these categories: ' + enabledDefects + '.',
+      '- For each category, set status to exactly one of: detected, not_detected, uncertain, error.',
+      '- Use detected only when the defect appearance is clearly visible in this image.',
+      '- Use not_detected only when the image is usable and no visible evidence of that category is present.',
+      '- Use uncertain when lighting, blur, overlap, resolution, or angle makes the finding ambiguous.',
+      '- Use error only when the category cannot be assessed from this image; explain why.',
+      '- Give a short, concrete visual explanation for every category, including not_detected.',
+      '- Report "Suspected Mold" or "mold-like growth" only. Never claim a fungal infection or identify a fungus.',
+      '- Account for shadows, highlights, natural colour variation, and processing artefacts before calling discolouration or black spots.',
+      '- Do not describe defect locations, bounding boxes, regions, or individual nuts.',
+      '- Always set affectedNutCount to null. Do not count affected nuts; you are an image-level reviewer, not a detector, and the application discards any count.',
+      '- Do not automatically downgrade a grade because a defect finding is present. Defect findings and grade hints are separate outputs.',
+      '- Return exactly one object for each of the four defect keys.'
+    );
+  }
+
+  lines.push('- Return only JSON matching the supplied schema.');
+  return lines.join('\n');
 }
 
-function parseJsonResponse(text) {
+function validateDefectCategories(raw, requireDefects) {
+  if (raw === undefined || raw === null) {
+    if (requireDefects) {
+      throw new Error('Gemini response is missing defect findings.');
+    }
+    return null;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Gemini defect findings must be an object.');
+  }
+
+  const result = {};
+  const keys = requireDefects ? DEFECT_KEYS : DEFECT_KEYS.filter((key) => raw[key] !== undefined);
+  keys.forEach((key) => {
+    const item = raw[key];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`Gemini defect finding "${key}" is missing or invalid.`);
+    }
+    if (!['detected', 'not_detected', 'uncertain', 'error'].includes(item.status)) {
+      throw new Error(`Gemini defect finding "${key}" has an invalid status.`);
+    }
+    const explanation = String(item.explanation || '').trim();
+    if (!explanation) {
+      throw new Error(`Gemini defect finding "${key}" is missing an explanation.`);
+    }
+    if (item.status === 'detected' && explanation.length < 3) {
+      throw new Error(`Gemini defect finding "${key}" has no usable explanation.`);
+    }
+    if (
+      item.affectedNutCount !== undefined &&
+      item.affectedNutCount !== null &&
+      (!Number.isInteger(item.affectedNutCount) || item.affectedNutCount < 0)
+    ) {
+      throw new Error(`Gemini defect finding "${key}" has an invalid affectedNutCount.`);
+    }
+    result[key] = {
+      status: item.status,
+      explanation: explanation.slice(0, 600),
+      // Deliberately not retained: an image-level model cannot establish a
+      // verified affected-nut count. A future detector may set countBasis.
+      affectedNutCount: null,
+    };
+  });
+  return result;
+}
+
+function parseJsonResponse(text, options = {}) {
   const cleaned = String(text || '')
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
@@ -249,12 +380,16 @@ function parseJsonResponse(text) {
     throw new Error('Gemini returned a grade hint without supporting visual evidence.');
   }
 
+  const requireDefects = options.requireDefects !== false;
+  const defects = validateDefectCategories(parsed.defects, requireDefects);
+
   return {
     imageUsable: parsed.imageUsable,
     gradeHint: parsed.gradeHint,
     evidence,
     limitations,
     containsMixedGrades: parsed.containsMixedGrades,
+    defects,
   };
 }
 
@@ -262,7 +397,16 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function callOnce({ key, model, timeoutMs, maxOutputTokens, image, prompt }) {
+async function callOnce({
+  key,
+  model,
+  timeoutMs,
+  maxOutputTokens,
+  image,
+  prompt,
+  includeDefects = false,
+  requireDefects = false,
+}) {
   const fetchImpl = testFetch || global.fetch;
   if (typeof fetchImpl !== 'function') {
     throw new GeminiServiceError('No fetch implementation is available.', {
@@ -303,7 +447,7 @@ async function callOnce({ key, model, timeoutMs, maxOutputTokens, image, prompt 
           topP: 0.8,
           maxOutputTokens,
           responseMimeType: 'application/json',
-          responseSchema: RESPONSE_SCHEMA,
+          responseSchema: buildResponseSchema(includeDefects),
         },
         safetySettings: [
           { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },
@@ -361,7 +505,7 @@ async function callOnce({ key, model, timeoutMs, maxOutputTokens, image, prompt 
 
     let parsed;
     try {
-      parsed = parseJsonResponse(text);
+      parsed = parseJsonResponse(text, { requireDefects });
     } catch (error) {
       throw new GeminiServiceError(
         `Gemini response failed validation: ${scrubSecrets(error.message)}`,
@@ -388,6 +532,9 @@ async function callOnce({ key, model, timeoutMs, maxOutputTokens, image, prompt 
 
 async function analyzeImage(buffer, options = {}) {
   const settings = options.settings || {};
+  const context = options.context || {};
+  const includeDefects = Boolean(context.includeDefects);
+  const requireDefects = includeDefects && context.requireDefects !== false;
   const geminiSettings = {
     model: settings.gemini?.model || config.geminiModel,
     timeoutMs: settings.gemini?.timeoutMs || config.geminiTimeoutMs,
@@ -421,7 +568,7 @@ async function analyzeImage(buffer, options = {}) {
     });
   }
 
-  const prompt = buildPrompt(options.context);
+  const prompt = buildPrompt({ ...context, includeDefects });
   const startedAt = Date.now();
   const errors = [];
   const available = keys.filter((key) => stateFor(key).coolingUntil <= Date.now());
@@ -440,13 +587,18 @@ async function analyzeImage(buffer, options = {}) {
           maxOutputTokens: config.geminiMaxOutputTokens,
           image,
           prompt,
+          includeDefects,
+          requireDefects,
         });
         markSuccess(key);
+        const latencyMs = Date.now() - startedAt;
         return {
           status: 'ok',
           advisoryOnly: true,
+          analysisMethod: 'gemini_vision',
           model: geminiSettings.model,
-          latencyMs: Date.now() - startedAt,
+          analyzedAt: new Date().toISOString(),
+          latencyMs,
           imageWidth: image.width,
           imageHeight: image.height,
           imageUsable: parsed.imageUsable,
@@ -454,8 +606,23 @@ async function analyzeImage(buffer, options = {}) {
           evidence: parsed.evidence,
           limitations: parsed.limitations,
           containsMixedGrades: parsed.containsMixedGrades,
+          defects:
+            includeDefects && parsed.defects
+              ? buildGeminiDefectAnalysis({
+                  rawCategories: parsed.defects,
+                  categories:
+                    Array.isArray(context.enabledDefectCategories) &&
+                    context.enabledDefectCategories.length
+                      ? context.enabledDefectCategories
+                      : DEFECT_KEYS,
+                  model: geminiSettings.model,
+                  latencyMs,
+                  imageUsable: parsed.imageUsable,
+                  limitations: parsed.limitations,
+                })
+              : null,
           note:
-            'Gemini visual review is an advisory image-level hint. It is not a validated detector and is never used to create Grade C/D nut counts.',
+            'Gemini visual review is an advisory image-level result. It is not a validated detector and is never used to create Grade C/D nut counts, defect locations, or verified affected-nut counts.',
         };
       } catch (error) {
         lastError = error;

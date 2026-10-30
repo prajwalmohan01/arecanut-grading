@@ -16,6 +16,12 @@ import {
 import { formatDateTime, formatNumber } from '../utils/format';
 
 const GRADE_LETTERS = ['A', 'B', 'C', 'D'];
+const DEFECT_CATEGORIES = [
+  ['blackSpots', 'Black spots', 'Dark spots or patches that may indicate surface defects or handling damage.'],
+  ['cracks', 'Cracks', 'Visible splits, fissures, or broken areas on the nut surface.'],
+  ['mold', 'Suspected mold', 'Mold-like growth or fuzz. This is never a confirmed fungal infection or fungus identification.'],
+  ['discoloration', 'Discoloration', 'Abnormal colour change after accounting for natural variation, shadows, and highlights.'],
+];
 const UNITS = [
   ['per_kg', 'per kg'],
   ['per_quintal', 'per quintal'],
@@ -75,6 +81,7 @@ export default function AdminSettings() {
   const [refreshingMarket, setRefreshingMarket] = useState(false);
 
   const [predictions, setPredictions] = useState(null);
+  const [defectsForm, setDefectsForm] = useState(null);
   const [geminiForm, setGeminiForm] = useState(null);
   const [pricingForm, setPricingForm] = useState(null);
 
@@ -83,6 +90,7 @@ export default function AdminSettings() {
       setSettings(data.settings);
       if (!keepDraft) {
         setPredictions(clone(data.settings.predictions));
+        setDefectsForm(clone(data.settings.defects || { masterEnabled: false, categories: {} }));
         setGeminiForm(clone(data.settings.gemini));
         setPricingForm(clone(data.settings.pricing));
       }
@@ -131,8 +139,33 @@ export default function AdminSettings() {
     return null;
   }, [predictions]);
 
+  const defectIssue = useMemo(() => {
+    if (!defectsForm) return null;
+    if (predictions?.masterEnabled && defectsForm.masterEnabled && !predictions?.geminiEnabled) {
+      return 'Defect review is powered by Gemini. With Gemini-assisted analysis off, enabled defect categories will show “Analysis unavailable” rather than “Not detected”.';
+    }
+    if (predictions?.masterEnabled && defectsForm.masterEnabled) {
+      const enabled = Object.values(defectsForm.categories || {}).filter(Boolean).length;
+      if (enabled === 0) {
+        return 'Enable at least one defect category, or turn master defect detection off.';
+      }
+    }
+    return null;
+  }, [defectsForm, predictions]);
+
   function patchPrediction(key, value) {
     setPredictions((current) => ({ ...current, [key]: value }));
+  }
+
+  function patchDefectMaster(value) {
+    setDefectsForm((current) => ({ ...current, masterEnabled: value }));
+  }
+
+  function patchDefectCategory(key, value) {
+    setDefectsForm((current) => ({
+      ...current,
+      categories: { ...(current?.categories || {}), [key]: value },
+    }));
   }
 
   function patchGrade(letter, value) {
@@ -157,6 +190,33 @@ export default function AdminSettings() {
       await refreshPolicy();
     } catch (err) {
       toast.error(apiErrorMessage(err, 'Could not save prediction switches.'));
+    } finally {
+      setSaving('');
+    }
+  }
+
+  async function saveDefects() {
+    if (!defectsForm) return;
+    setSaving('defects');
+    try {
+      const response = await API.put('/admin/settings/defects', {
+        masterEnabled: defectsForm.masterEnabled,
+        categories: defectsForm.categories,
+      });
+      adopt(response.data, { keepDraft: true });
+      setDefectsForm(
+        clone(
+          response.data.settings.defects || {
+            masterEnabled: false,
+            categories: {},
+          }
+        )
+      );
+      toast.success(response.data.message || 'Defect detection switches saved.');
+      await loadAudit();
+      await refreshPolicy();
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Could not save defect detection switches.'));
     } finally {
       setSaving('');
     }
@@ -296,6 +356,9 @@ export default function AdminSettings() {
             <StatusPill ok={policy.enabledLetters?.length > 0}>
               Grades {policy.enabledLetters?.length ? policy.enabledLetters.join(' / ') : 'hidden'}
             </StatusPill>
+            <StatusPill ok={policy.defectDetectionEnabled}>
+              Defects {policy.defectDetectionEnabled ? 'on' : 'off'}
+            </StatusPill>
             <StatusPill ok={policy.geminiEnabled}>Gemini {policy.geminiEnabled ? 'on' : 'off'}</StatusPill>
             <StatusPill ok={policy.pricingMode !== 'none'}>
               Pricing {policy.pricingMode === 'none' ? 'off' : policy.pricingMode}
@@ -310,8 +373,8 @@ export default function AdminSettings() {
             <div>
               <h3 className="font-display text-lg font-semibold text-main">Prediction switches</h3>
               <p className="mt-1 text-xs leading-relaxed text-muted">
-                Master off suppresses all grades, counts, percentages, confidence, charts,
-                pricing, and PDF grade sections.
+                Master off suppresses all grades, counts, percentages, confidence, defect sections,
+                charts, pricing, and PDF grade sections.
               </p>
             </div>
             <SparkIcon width={20} height={20} />
@@ -343,8 +406,8 @@ export default function AdminSettings() {
             ))}
             <ToggleRow
               id="gemini-assisted"
-              label="Gemini-assisted prediction"
-              description="Advisory image-level visual review only. Gemini is never used as an object detector and never creates counts or bounding boxes."
+              label="Gemini-assisted analysis"
+              description="Advisory image-level review for C/D hints and enabled defect categories. Gemini is never used as an object detector and never creates counts or bounding boxes."
               checked={predictions?.geminiEnabled}
               onChange={(value) => patchPrediction('geminiEnabled', value)}
               disabled={!predictions?.masterEnabled}
@@ -370,10 +433,70 @@ export default function AdminSettings() {
         <Card className="p-5 animate-in">
           <div className="flex items-start justify-between gap-3">
             <div>
+              <h3 className="font-display text-lg font-semibold text-main">Defect detection</h3>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                Gemini reviews the original uploaded image for visible defect appearance. Findings
+                are image-level only and never downgrade a grade automatically.
+              </p>
+            </div>
+            <span className={`badge ${policy?.defectDetectionEnabled ? 'badge-a' : 'badge-neutral'}`}>
+              {policy?.defectDetectionEnabled ? 'Active' : 'Off'}
+            </span>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            <ToggleRow
+              id="master-defects"
+              label="Master defect detection"
+              description="Global switch for defect findings, explanations, history summaries, CSV columns, statistics, and PDF sections."
+              checked={defectsForm?.masterEnabled}
+              onChange={patchDefectMaster}
+              disabled={!predictions?.masterEnabled}
+              tone={defectsForm?.masterEnabled ? 'default' : 'danger'}
+            />
+            {DEFECT_CATEGORIES.map(([key, label, description]) => (
+              <ToggleRow
+                key={key}
+                id={`defect-${key}`}
+                label={label}
+                description={description}
+                checked={defectsForm?.categories?.[key]}
+                onChange={(value) => patchDefectCategory(key, value)}
+                disabled={!predictions?.masterEnabled || !defectsForm?.masterEnabled}
+              />
+            ))}
+          </div>
+
+          {defectIssue && (
+            <div className="alert alert-warn mt-3 items-start text-xs">
+              <AlertIcon width={15} height={15} />
+              <span>{defectIssue}</span>
+            </div>
+          )}
+
+          <div className="mt-3 rounded-2xl bg-[color:var(--panel-soft)] p-3 text-[11px] leading-relaxed text-muted">
+            Gemini cannot establish verified affected-nut counts, defect locations, bounding boxes,
+            or fungal confirmation. Those fields stay unavailable until a validated defect detector
+            or segmentation model is installed. A failed Gemini request is shown as “Analysis
+            unavailable” with a retry action — never as “Not detected”.
+          </div>
+
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <p className="text-[11px] text-muted">Changes apply server-side immediately.</p>
+            <Button onClick={saveDefects} disabled={saving === 'defects'}>
+              {saving === 'defects' ? <Spinner size={14} /> : <CheckIcon width={15} height={15} />}
+              {saving === 'defects' ? 'Saving…' : 'Save defects'}
+            </Button>
+          </div>
+        </Card>
+
+        <Card className="p-5 animate-in">
+          <div className="flex items-start justify-between gap-3">
+            <div>
               <h3 className="font-display text-lg font-semibold text-main">Gemini advisory</h3>
               <p className="mt-1 text-xs leading-relaxed text-muted">
                 Keys are read only from server environment variables and are never shown or
-                written to the audit log.
+                written to the audit log. Used for C/D advisories and enabled defect categories.
               </p>
             </div>
             <span className={`badge ${geminiStatus?.configuredKeys > 0 ? 'badge-a' : 'badge-invalid'}`}>
@@ -450,8 +573,8 @@ export default function AdminSettings() {
             <div className="alert alert-warn mt-3 items-start text-xs">
               <AlertIcon width={15} height={15} />
               <span>
-                No Gemini key is configured. Grade C/D cannot run until a server-side
-                GEMINI_API_KEY is added and the backend is restarted.
+                No Gemini key is configured. Grade C/D review and defect analysis cannot run until
+                a server-side GEMINI_API_KEY is added and the backend is restarted.
               </span>
             </div>
           )}
@@ -742,8 +865,10 @@ export default function AdminSettings() {
         <AlertIcon width={16} height={16} />
         <span>
           C/D grades are not supported by the bundled two-class model and cannot be counted.
-          Gemini output is advisory only. Market quotes are daily AGMARKNET values and not a
-          guaranteed transaction price. Prices and estimates are never shown while pricing is off.
+          Gemini output is advisory image-level review only. Defect locations, verified
+          affected-nut counts, and fungal confirmation require a validated detector and are never
+          invented. Market quotes are daily AGMARKNET values and not a guaranteed transaction
+          price. Prices and estimates are never shown while pricing is off.
         </span>
       </div>
     </div>

@@ -202,6 +202,124 @@ test('Gemini advisory text is suppressed when its hinted grade is disabled', () 
   assert.match(visible.geminiAdvisory.hiddenReason, /hidden by the display policy/);
 });
 
+test('enabled defect categories are shown while disabled findings and explanations are removed', () => {
+  const settings = settingsWith();
+  settings.predictions.geminiEnabled = true;
+  settings.defects = {
+    masterEnabled: true,
+    categories: { blackSpots: true, cracks: false, mold: true, discoloration: false },
+  };
+  const visible = applyScanPolicy(
+    scan({
+      defects: {
+        analysisStatus: 'success',
+        analysisMethod: 'gemini_vision',
+        model: 'gemini-test',
+        analyzedAt: '2026-10-30T10:00:00.000Z',
+        latencyMs: 120,
+        imageLevelOnly: true,
+        localizationAvailable: false,
+        affectedNutCountsAvailable: false,
+        note: 'Image-level only.',
+        limitations: ['Cracks are difficult to see in this lighting.', 'Counts need a detector.'],
+        categories: {
+          blackSpots: {
+            key: 'blackSpots',
+            name: 'Black Spots',
+            status: 'detected',
+            affectedNutCount: 7,
+            countBasis: 'not_established',
+            explanation: 'Dark patches are visible on several nuts.',
+          },
+          cracks: {
+            key: 'cracks',
+            name: 'Cracks',
+            status: 'detected',
+            affectedNutCount: 2,
+            countBasis: 'not_established',
+            explanation: 'Micro-fractures are visible.',
+          },
+          mold: {
+            key: 'mold',
+            name: 'Suspected Mold',
+            status: 'uncertain',
+            affectedNutCount: null,
+            countBasis: 'not_established',
+            explanation: 'A pale patch may be mold-like growth.',
+          },
+          discoloration: {
+            key: 'discoloration',
+            name: 'Discoloration',
+            status: 'not_detected',
+            affectedNutCount: null,
+            countBasis: 'not_established',
+            explanation: 'Colour variation looks natural.',
+          },
+        },
+      },
+    }),
+    settings
+  );
+
+  assert.equal(visible.defectDetectionEnabled, true);
+  assert.deepEqual(visible.enabledDefectCategories, ['blackSpots', 'mold']);
+  assert.deepEqual(Object.keys(visible.defects.categories), ['blackSpots', 'mold']);
+  assert.equal(visible.defects.categories.blackSpots.affectedNutCount, null);
+  assert.equal(visible.defects.categories.mold.status, 'uncertain');
+  assert.equal(JSON.stringify(visible.defects).includes('Micro-fractures'), false);
+  assert.equal(JSON.stringify(visible.defects).includes('Colour variation'), false);
+  assert.equal(JSON.stringify(visible.defects.limitations).includes('Cracks'), false);
+});
+
+test('master defect off or no enabled categories removes every defect finding', () => {
+  const base = scan({
+    defects: {
+      analysisStatus: 'success',
+      categories: {
+        blackSpots: { status: 'detected', explanation: 'Dark patches.' },
+      },
+    },
+  });
+
+  const masterOff = settingsWith();
+  masterOff.defects = {
+    masterEnabled: false,
+    categories: { blackSpots: true, cracks: true, mold: true, discoloration: true },
+  };
+  const hidden = applyScanPolicy(base, masterOff);
+  assert.equal(hidden.defects, null);
+  assert.equal(hidden.defectDetectionEnabled, false);
+  assert.deepEqual(hidden.enabledDefectCategories, []);
+
+  const allCategoriesOff = settingsWith();
+  allCategoriesOff.defects = {
+    masterEnabled: true,
+    categories: { blackSpots: false, cracks: false, mold: false, discoloration: false },
+  };
+  const noCategories = applyScanPolicy(base, allCategoriesOff);
+  assert.equal(noCategories.defects, null);
+  assert.equal(noCategories.defectDetectionEnabled, false);
+});
+
+test('a missing stored defect analysis is reported as unavailable, not not-detected', () => {
+  const settings = settingsWith();
+  settings.predictions.geminiEnabled = true;
+  settings.defects = {
+    masterEnabled: true,
+    categories: { blackSpots: true, cracks: true, mold: true, discoloration: true },
+  };
+  const visible = applyScanPolicy(scan({ defects: null }), settings);
+
+  assert.equal(visible.defects.analysisStatus, 'unavailable');
+  assert.equal(visible.defects.errorCode, 'not_analyzed');
+  assert.equal(visible.defects.categories.blackSpots.status, 'error');
+  assert.match(visible.defects.categories.blackSpots.explanation, /No Gemini defect analysis/);
+  assert.equal(
+    Object.values(visible.defects.categories).some((item) => item.status === 'not_detected'),
+    false
+  );
+});
+
 test('manual pricing uses enabled counts and a measured weight, never avg nut weight', () => {
   const settings = manualSettings({
     A: { price: 200, unit: 'per_kg' },

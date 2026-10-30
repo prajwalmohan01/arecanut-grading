@@ -100,12 +100,10 @@ function normaliseResult(raw) {
     confidenceMethod: report.confidence_method || null,
     detections: Array.isArray(report.detections) ? report.detections : [],
     measurements: report.measurements || null,
-    defects: report.defects || {
-      supported: false,
-      reason: 'Defect detection is not supported by the preserved model.',
-      categories: [],
-      items: [],
-    },
+    // The bundled detector has no defect classes. Gemini defect findings are
+    // added by the prediction route only when the administrator enables them.
+    defects:
+      report.defects && typeof report.defects === 'object' ? report.defects : null,
     inference: report.inference || null,
     warnings: Array.isArray(report.warnings) ? report.warnings : [],
     model: raw.model || {},

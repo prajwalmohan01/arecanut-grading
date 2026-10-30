@@ -37,6 +37,18 @@ const systemSettingsSchema = new mongoose.Schema(
       geminiEnabled: { type: Boolean, default: false },
     },
 
+    // Image-level Gemini defect review. This is intentionally separate from
+    // grading: a visible defect finding never silently downgrades a grade.
+    defects: {
+      masterEnabled: { type: Boolean, default: false },
+      categories: {
+        blackSpots: { type: Boolean, default: true },
+        cracks: { type: Boolean, default: true },
+        mold: { type: Boolean, default: true },
+        discoloration: { type: Boolean, default: true },
+      },
+    },
+
     gemini: {
       model: { type: String, default: 'gemini-3.5-flash', trim: true, maxlength: 120 },
       timeoutMs: { type: Number, default: 30000, min: 3000, max: 120000 },

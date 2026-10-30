@@ -47,6 +47,11 @@ const {
   resolveLivePrice,
 } = require('../services/presentationService');
 const { analyzeImage } = require('../services/geminiService');
+const {
+  DEFECT_KEYS,
+  DEFECT_LABELS,
+  buildUnavailableDefects,
+} = require('../services/defectService');
 
 const router = express.Router();
 
@@ -110,24 +115,62 @@ function gradeLetterForFinalGrade(value) {
   return gradeLetterFromValue(value);
 }
 
-async function runGeminiAdvisory({ uploadedPath, settings, inference, policy }) {
+function unavailableAdvisory(message, errorCode) {
+  return {
+    status: 'unavailable',
+    advisoryOnly: true,
+    analysisMethod: 'gemini_vision',
+    gradeHint: null,
+    evidence: [],
+    limitations: [message],
+    note:
+      'Gemini-assisted Grade C/D review is unavailable. No Grade C/D count or grade was invented. This is not a validation result.',
+    errorCode: errorCode || 'gemini_unavailable',
+  };
+}
+
+async function runGeminiAnalysis({
+  uploadedPath,
+  uploadedBuffer,
+  settings,
+  inference,
+  policy,
+}) {
   const needsAdvisory = policy.enabledLetters.some((letter) => ['C', 'D'].includes(letter));
-  if (!needsAdvisory) return null;
-  if (!policy.geminiEnabled) {
+  const enabledDefectCategories = Array.isArray(policy.enabledDefectCategories)
+    ? policy.enabledDefectCategories
+    : [];
+  const needsDefects = Boolean(
+    policy.defectDetectionEnabled && enabledDefectCategories.length > 0
+  );
+
+  if (!needsAdvisory && !needsDefects) {
+    return { advisory: null, defects: null };
+  }
+
+  function unavailable(message, errorCode) {
     return {
-      status: 'unavailable',
-      advisoryOnly: true,
-      gradeHint: null,
-      evidence: [],
-      limitations: [
-        'Gemini-assisted review is disabled or unavailable, so Grade C/D visual review cannot run.',
-      ],
-      note:
-        'Grade C/D cannot be counted without a validated detector. No grade was invented.',
+      advisory: needsAdvisory ? unavailableAdvisory(message, errorCode) : null,
+      defects: needsDefects
+        ? buildUnavailableDefects({
+            error: message,
+            errorCode,
+            model: settings.gemini && settings.gemini.model,
+            categories: enabledDefectCategories,
+          })
+        : null,
     };
   }
+
+  if (!policy.geminiEnabled) {
+    return unavailable(
+      'Gemini-assisted analysis is disabled by the administrator or unavailable.',
+      'gemini_disabled'
+    );
+  }
+
   try {
-    const buffer = fs.readFileSync(uploadedPath);
+    const buffer = uploadedBuffer || fs.readFileSync(uploadedPath);
     const contextCounts = {};
     ['A', 'B'].forEach((letter) => {
       if (policy.enabledLetters.includes(letter)) {
@@ -141,20 +184,20 @@ async function runGeminiAdvisory({ uploadedPath, settings, inference, policy }) 
           policy.enabledLetters.includes(letter)
         ),
         counts: contextCounts,
+        includeDefects: needsDefects,
+        requireDefects: needsDefects,
+        enabledDefectCategories,
       },
     });
-    return result;
-  } catch (error) {
     return {
-      status: 'unavailable',
-      advisoryOnly: true,
-      gradeHint: null,
-      evidence: [],
-      limitations: [error.message],
-      note:
-        'Gemini-assisted Grade C/D review failed. No Grade C/D count or grade was invented.',
-      errorCode: error.code || 'gemini_unavailable',
+      advisory: needsAdvisory ? result : null,
+      defects: needsDefects ? result.defects : null,
     };
+  } catch (error) {
+    return unavailable(
+      error.message || 'Gemini-assisted analysis failed.',
+      error.code || 'gemini_unavailable'
+    );
   }
 }
 
@@ -228,6 +271,75 @@ function csvCell(value) {
   return text;
 }
 
+function activeDefectKeys(policy) {
+  return Array.isArray(policy && policy.enabledDefectCategories)
+    ? policy.enabledDefectCategories
+    : [];
+}
+
+function scanSelect(policy, options = {}) {
+  const excluded = ['-annotatedImage'];
+  if (!activeDefectKeys(policy).length) excluded.push('-defects');
+  if (options.excludeDetections) excluded.push('-detections');
+  return excluded.join(' ');
+}
+
+function emptyDefectSummary(enabledKeys) {
+  const categories = {};
+  enabledKeys.forEach((key) => {
+    categories[key] = {
+      key,
+      name: DEFECT_LABELS[key],
+      detected: 0,
+      not_detected: 0,
+      uncertain: 0,
+      error: 0,
+      analyzed: 0,
+    };
+  });
+  return { enabled: true, categories };
+}
+
+function defectSummaryPipeline(filter, enabledKeys) {
+  if (!enabledKeys.length) return [];
+  return [
+    { $match: filter },
+    {
+      $project: {
+        categories: {
+          $cond: [
+            { $eq: [{ $type: '$defects.categories' }, 'object'] },
+            { $objectToArray: '$defects.categories' },
+            [],
+          ],
+        },
+      },
+    },
+    { $unwind: '$categories' },
+    { $match: { 'categories.k': { $in: enabledKeys } } },
+    {
+      $group: {
+        _id: { key: '$categories.k', status: '$categories.v.status' },
+        count: { $sum: 1 },
+      },
+    },
+  ];
+}
+
+function applyDefectRows(summary, rows) {
+  (rows || []).forEach((row) => {
+    const key = row && row._id && row._id.key;
+    const status = row && row._id && row._id.status;
+    const category = key && summary.categories[key];
+    if (!category || !['detected', 'not_detected', 'uncertain', 'error'].includes(status)) {
+      return;
+    }
+    category[status] += Number(row.count) || 0;
+    category.analyzed += Number(row.count) || 0;
+  });
+  return summary;
+}
+
 // ── POST /api/scans/predict ────────────────────────────────────────────────
 router.post(
   '/predict',
@@ -277,12 +389,13 @@ router.post(
       throw error;
     }
 
-    const advisory = await runGeminiAdvisory({
+    const gemini = await runGeminiAnalysis({
       uploadedPath,
       settings,
       inference,
       policy,
     });
+    const advisory = gemini.advisory;
 
     const enabledAb = policy.enabledLetters.filter(
       (letter) =>
@@ -293,7 +406,12 @@ router.post(
       enabledAb.length === 0 &&
       policy.enabledLetters.some((letter) => ['C', 'D'].includes(letter));
 
-    if (onlyAdvisoryGrades && (!advisory || advisory.status !== 'ok')) {
+    const defectsRequested = activeDefectKeys(policy).length > 0;
+    if (
+      onlyAdvisoryGrades &&
+      (!advisory || advisory.status !== 'ok') &&
+      !defectsRequested
+    ) {
       removeTempFile(uploadedPath);
       return res.status(503).json({
         error:
@@ -363,7 +481,7 @@ router.post(
         settingsSnapshot: settingsSnapshot(settings),
         detections: inference.detections,
         measurements: inference.measurements,
-        defects: inference.defects,
+        defects: gemini.defects,
         warnings: inference.warnings,
         modelId: inference.model.id || null,
         modelVersion: inference.model.version || null,
@@ -396,6 +514,7 @@ router.post(
         finalGrade: view.finalGrade,
         finalGradeSource: view.finalGradeSource,
         geminiAdvisory: view.geminiAdvisory,
+        defects: view.defects,
         pricing: view.pricing,
         policy: view.predictionPolicy,
         annotatedImage: null,
@@ -432,13 +551,14 @@ router.get(
 
     const { page, limit, skip } = parsePagination(req.query, { limit: 10 });
     const filter = buildFilter(req.user._id, req.query);
+    const enabledDefectKeys = activeDefectKeys(policy);
 
-    const [items, total, summaryRows] = await Promise.all([
+    const [items, total, summaryRows, defectRows] = await Promise.all([
       Scan.find(filter)
         .sort(sortOption(req.query.sort))
         .skip(skip)
         .limit(limit)
-        .select('-annotatedImage -defects'),
+        .select(scanSelect(policy)),
       Scan.countDocuments(filter),
       Scan.aggregate([
         { $match: filter },
@@ -455,6 +575,9 @@ router.get(
           },
         },
       ]),
+      enabledDefectKeys.length
+        ? Scan.aggregate(defectSummaryPipeline(filter, enabledDefectKeys))
+        : Promise.resolve([]),
     ]);
 
     const views = await presentScans(items, settings, {
@@ -504,6 +627,12 @@ router.get(
     if (qualityWeight > 0) {
       summary.avgQualityScore = Math.round((summary.avgQualityScore / qualityWeight) * 10) / 10;
     }
+    if (enabledDefectKeys.length) {
+      summary.defects = applyDefectRows(
+        emptyDefectSummary(enabledDefectKeys),
+        defectRows
+      );
+    }
 
     return res.json({
       items: views,
@@ -540,13 +669,14 @@ router.get(
     if (filterError) return res.status(400).json({ error: filterError });
 
     const MAX_ROWS = 5000;
+    const enabledDefectKeys = activeDefectKeys(policy);
     const filter = buildFilter(req.user._id, req.query);
     const [total, scans] = await Promise.all([
       Scan.countDocuments(filter),
       Scan.find(filter)
         .sort(sortOption(req.query.sort))
         .limit(MAX_ROWS)
-        .select('-annotatedImage -defects'),
+        .select(scanSelect(policy)),
     ]);
     const views = scans.map((scan) =>
       applyScanPolicy(serializeScan(scan, { includeDetections: false }), settings)
@@ -594,6 +724,15 @@ router.get(
       `Enabled grades,${policy.enabledLetters.length ? policy.enabledLetters.join('') : 'none'}`
     );
     lines.push(`Pricing mode,${policy.pricingMode}`);
+    if (enabledDefectKeys.length) {
+      lines.push('Defect analysis,Gemini image-level review');
+      lines.push(
+        `Enabled defects,${enabledDefectKeys.map((key) => DEFECT_LABELS[key]).join('; ')}`
+      );
+      lines.push(
+        'Defect counts and locations,not available without a validated detector'
+      );
+    }
     lines.push(`Matching predictions,${total}`);
     lines.push(`Rows exported,${scans.length}`);
     if (policy.masterEnabled) {
@@ -622,6 +761,13 @@ router.get(
         ? policy.enabledLetters.map((letter) => `Grade ${letter}`)
         : []),
       ...(policy.masterEnabled ? ['Total enabled count', 'Confidence', 'Quality score'] : []),
+      ...(enabledDefectKeys.length
+        ? enabledDefectKeys.flatMap((key) => [
+            `${DEFECT_LABELS[key]} status`,
+            `${DEFECT_LABELS[key]} affected nuts`,
+            `${DEFECT_LABELS[key]} explanation`,
+          ])
+        : []),
       'Model version',
       'Lot',
       'Lot reference',
@@ -648,6 +794,18 @@ router.get(
           : []),
         ...(policy.masterEnabled
           ? [view.totalCount ?? '', view.confidence ?? '', view.qualityScore ?? '']
+          : []),
+        ...(enabledDefectKeys.length
+          ? enabledDefectKeys.flatMap((key) => {
+              const category = view.defects?.categories?.[key];
+              return [
+                category?.status || '',
+                Number.isInteger(category?.affectedNutCount)
+                  ? category.affectedNutCount
+                  : '',
+                category?.explanation || '',
+              ];
+            })
           : []),
         scan.modelVersion || '',
         lot?.name || '',
@@ -686,8 +844,9 @@ router.get(
     const activityStart = new Date();
     activityStart.setUTCHours(0, 0, 0, 0);
     activityStart.setUTCDate(activityStart.getUTCDate() - (activityDays - 1));
+    const enabledDefectKeys = activeDefectKeys(policy);
 
-    const [groups, activity, recent, modelStatus] = await Promise.all([
+    const [groups, activity, recent, modelStatus, defectRows] = await Promise.all([
       Scan.aggregate([
         { $match: filter },
         {
@@ -717,8 +876,11 @@ router.get(
       Scan.find(filter)
         .sort({ createdAt: -1 })
         .limit(5)
-        .select('-annotatedImage -detections -defects'),
+        .select(scanSelect(policy, { excludeDetections: true })),
       getModelStatus(),
+      enabledDefectKeys.length
+        ? Scan.aggregate(defectSummaryPipeline(filter, enabledDefectKeys))
+        : Promise.resolve([]),
     ]);
 
     const counts = {
@@ -794,7 +956,7 @@ router.get(
           : null;
     }
 
-    return res.json({
+    const payload = {
       totals,
       gradeDistribution,
       activity: series,
@@ -805,7 +967,14 @@ router.get(
       policy,
       model: modelStatus,
       generatedAt: new Date().toISOString(),
-    });
+    };
+    if (enabledDefectKeys.length) {
+      payload.defects = applyDefectRows(
+        emptyDefectSummary(enabledDefectKeys),
+        defectRows
+      );
+    }
+    return res.json(payload);
   })
 );
 
@@ -940,10 +1109,105 @@ router.get(
       includePricing: true,
     });
     const images = await Promise.all(ordered.map((scan) => loadReportImages(scan)));
+    const missingOriginal = ordered.filter((_scan, index) => !images[index].original);
+    if (missingOriginal.length) {
+      return res.status(409).json({
+        error:
+          'The original uploaded image is missing for one or more predictions, so the comparison PDF cannot embed the required evidence. The PDF was not generated.',
+      });
+    }
     const buffer = await buildComparisonReport(views, images, {
       policy: buildPolicy(settings),
     });
     return sendPdf(res, buffer, `arecanut-comparison-${Date.now()}.pdf`);
+  })
+);
+
+// ── POST /api/scans/:id/reanalyze ──────────────────────────────────────────
+// Re-runs Gemini image analysis against the stored original image without
+// rerunning the Grade A/B checkpoint or creating a new prediction.
+router.post(
+  '/:id/reanalyze',
+  protect,
+  asyncHandler(async (req, res) => {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ error: 'Invalid prediction ID' });
+    }
+    const scan = await Scan.findOne({ _id: req.params.id, user: req.user._id });
+    if (!scan) return res.status(404).json({ error: 'Prediction not found' });
+
+    const settings = await getSettings({ fresh: true });
+    const policy = buildPolicy(settings);
+    if (!policy.masterEnabled) {
+      return res.status(403).json({
+        error: 'Master prediction is disabled by the administrator.',
+        policy,
+      });
+    }
+    const enabledDefectKeys = activeDefectKeys(policy);
+    if (!policy.defectDetectionEnabled || !enabledDefectKeys.length) {
+      return res.status(400).json({
+        error: 'Defect detection is disabled or no defect category is enabled.',
+        policy,
+      });
+    }
+    if (!policy.geminiEnabled) {
+      return res.status(409).json({
+        error:
+          'Gemini-assisted analysis is disabled by the administrator. Ask an administrator to enable it and configure a server-side key.',
+        policy,
+      });
+    }
+
+    const original = loadScanImage(scan, 'original');
+    if (!original) {
+      return res.status(409).json({
+        error:
+          'The original uploaded image is missing, so defect analysis cannot be retried. The stored images may have been removed.',
+        policy,
+      });
+    }
+
+    const inference = {
+      gradeA: scan.gradeA,
+      gradeB: scan.gradeB,
+      gradeC: scan.gradeC,
+      gradeD: scan.gradeD,
+      supportedGrades: Array.isArray(scan.supportedGrades)
+        ? scan.supportedGrades
+        : ['A', 'B'],
+    };
+    const gemini = await runGeminiAnalysis({
+      uploadedBuffer: original.buffer,
+      settings,
+      inference,
+      policy,
+    });
+
+    scan.geminiAdvisory = gemini.advisory;
+    scan.defects = gemini.defects;
+    await scan.save();
+
+    const view = await presentScan(scan, settings, {
+      includeDetections: true,
+      includePricing: true,
+      weightKg: req.body?.weightKg || req.query.weightKg,
+    });
+    const analysisStatus = view.defects?.analysisStatus || 'unavailable';
+    const unavailable = analysisStatus === 'unavailable';
+    return res.json({
+      success: analysisStatus === 'success',
+      analysisUnavailable: unavailable,
+      message:
+        analysisStatus === 'success'
+          ? 'Gemini defect analysis refreshed.'
+          : analysisStatus === 'partial'
+          ? 'Gemini defect analysis completed, but some enabled categories are still unavailable.'
+          : view.defects?.error ||
+            'Defect analysis is unavailable. No defect status was inferred; this is not a "not detected" result.',
+      scan: view,
+      policy: view.predictionPolicy,
+    });
   })
 );
 
@@ -1028,6 +1292,12 @@ router.get(
       weightKg: req.query.weightKg,
     });
     const images = await loadReportImages(scan);
+    if (!images.original) {
+      return res.status(409).json({
+        error:
+          'The original uploaded image is missing, so the PDF cannot embed the required evidence image. The PDF was not generated.',
+      });
+    }
     const buffer = await buildPredictionReport(view, images, {
       policy: buildPolicy(settings),
     });

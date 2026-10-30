@@ -139,7 +139,57 @@ function settingsWithGrades(grades, extra = {}) {
   settings.predictions.geminiEnabled = Boolean(extra.geminiEnabled);
   settings.pricing.mode = extra.pricingMode || 'manual';
   settings.version = 7;
+  if (extra.defects) settings.defects = extra.defects;
   return settings;
+}
+
+function storedDefects() {
+  return {
+    analysisStatus: 'success',
+    analysisMethod: 'gemini_vision',
+    model: 'gemini-test',
+    analyzedAt: '2026-10-30T10:00:00.000Z',
+    latencyMs: 120,
+    imageLevelOnly: true,
+    localizationAvailable: false,
+    affectedNutCountsAvailable: false,
+    note: 'Image-level findings only. No affected-nut count is claimed.',
+    limitations: ['Defect counts require a validated detector.'],
+    categories: {
+      blackSpots: {
+        key: 'blackSpots',
+        name: 'Black Spots',
+        status: 'detected',
+        affectedNutCount: 7,
+        countBasis: 'not_established',
+        explanation: 'Dark surface patches are visible.',
+      },
+      cracks: {
+        key: 'cracks',
+        name: 'Cracks',
+        status: 'detected',
+        affectedNutCount: null,
+        countBasis: 'not_established',
+        explanation: 'Micro-fractures are visible.',
+      },
+      mold: {
+        key: 'mold',
+        name: 'Suspected Mold',
+        status: 'uncertain',
+        affectedNutCount: null,
+        countBasis: 'not_established',
+        explanation: 'A pale patch may be mold-like growth.',
+      },
+      discoloration: {
+        key: 'discoloration',
+        name: 'Discoloration',
+        status: 'not_detected',
+        affectedNutCount: null,
+        countBasis: 'not_established',
+        explanation: 'Colour variation looks natural.',
+      },
+    },
+  };
 }
 
 async function textOf(pdf) {
@@ -188,6 +238,69 @@ test('master-on PDF keeps all evidence images and policy-approved sections', asy
   assert.match(text, /Estimated total: INR 2500\.00/);
   assert.doesNotMatch(text, /Image normalization warning/);
   assert.ok((await imageCount(pdf)) >= 3);
+});
+
+test('PDF includes enabled defect findings and omits disabled categories and unverified counts', async () => {
+  const images = await makeImages();
+  const view = applyScanPolicy(
+    scan({ defects: storedDefects() }),
+    settingsWithGrades(
+      { A: true, B: true, C: false, D: false },
+      {
+        geminiEnabled: true,
+        defects: {
+          masterEnabled: true,
+          categories: {
+            blackSpots: true,
+            cracks: false,
+            mold: true,
+            discoloration: false,
+          },
+        },
+      }
+    )
+  );
+  assert.equal(view.defectDetectionEnabled, true);
+  const pdf = await buildPredictionReport(view, images);
+  const text = await textOf(pdf);
+
+  assert.match(text, /DEFECT ANALYSIS \(GEMINI IMAGE-LEVEL REVIEW\)/);
+  assert.match(text, /Black Spots/);
+  assert.match(text, /Suspected Mold/);
+  assert.match(text, /Analysis method/);
+  assert.match(text, /Gemini vision, image-level/);
+  assert.match(text, /Not established \(requires a validated detector\)/);
+  assert.doesNotMatch(text, /Micro-fractures/);
+  assert.doesNotMatch(text, /Colour variation/);
+  assert.doesNotMatch(text, /Affected nuts: 7/);
+});
+
+test('PDF omits defect analysis when master defect detection is off', async () => {
+  const images = await makeImages();
+  const view = applyScanPolicy(
+    scan({ defects: storedDefects() }),
+    settingsWithGrades(
+      { A: true, B: true, C: false, D: false },
+      {
+        geminiEnabled: true,
+        defects: {
+          masterEnabled: false,
+          categories: {
+            blackSpots: true,
+            cracks: true,
+            mold: true,
+            discoloration: true,
+          },
+        },
+      }
+    )
+  );
+  assert.equal(view.defects, null);
+  const pdf = await buildPredictionReport(view, images);
+  const text = await textOf(pdf);
+  assert.doesNotMatch(text, /Defect analysis/);
+  assert.doesNotMatch(text, /Black Spots/);
+  assert.doesNotMatch(text, /Suspected Mold/);
 });
 
 test('master-off PDF embeds only the original image and hides grading and price sections', async () => {
