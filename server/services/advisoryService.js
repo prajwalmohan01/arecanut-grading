@@ -92,10 +92,10 @@ function unavailableAdvisory(message, errorCode) {
     evidence: [],
     limitations: [
       message ||
-        'Gemini-assisted Grade C/D review is unavailable. No Grade C/D count or grade was invented.',
+        'Extended Grading Analysis for Grade C/D review is unavailable. No Grade C/D count or grade was invented.',
     ],
     note:
-      'Gemini-assisted Grade C/D review is unavailable. No Grade C/D count or grade was invented. This is not a validation result.',
+      'Extended Grading Analysis for Grade C/D review is unavailable. No Grade C/D count or grade was invented. This is not a validation result.',
     errorCode: errorCode || 'gemini_unavailable',
   };
 }

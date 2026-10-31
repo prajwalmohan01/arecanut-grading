@@ -79,6 +79,17 @@ function scrubSecrets(text) {
 function classifyFailure(status, bodyText) {
   const body = String(bodyText || '');
   const lower = body.toLowerCase();
+  
+  // Check for RESOURCE_EXHAUSTED (project-level quota) and RATE_LIMIT_EXCEEDED
+  if (
+    status === 429 ||
+    lower.includes('resource_exhausted') ||
+    lower.includes('rate limit') ||
+    lower.includes('quota') ||
+    lower.includes('too many requests')
+  ) {
+    return { kind: 'rate_limit', retryable: true, code: 'rate_limit' };
+  }
   if (
     status === 400 &&
     (lower.includes('api key') ||
@@ -89,9 +100,6 @@ function classifyFailure(status, bodyText) {
   }
   if (status === 401 || status === 403) {
     return { kind: 'key', retryable: false, code: 'permission_denied' };
-  }
-  if (status === 429) {
-    return { kind: 'key', retryable: false, code: 'quota_or_rate_limit' };
   }
   if (status >= 500) {
     return { kind: 'transient', retryable: true, code: 'upstream_error' };
@@ -115,7 +123,8 @@ function markFailure(key, failure, cooldownMs = DEFAULT_COOLDOWN_MS) {
   state.consecutiveFailures += 1;
   state.lastFailureAt = new Date().toISOString();
   state.lastError = failure.code;
-  if (failure.kind === 'key' || state.consecutiveFailures >= 2) {
+  // Cool down on key-specific failures, rate limits, or repeated failures
+  if (failure.kind === 'key' || failure.kind === 'rate_limit' || state.consecutiveFailures >= 2) {
     state.coolingUntil = Math.max(state.coolingUntil, Date.now() + cooldownMs);
   }
 }
@@ -395,12 +404,132 @@ function validateDefectCategories(raw, requireDefects) {
   return result;
 }
 
+function fixCommonJsonIssues(jsonString) {
+  let fixed = jsonString;
+  
+  // Fix 1: Handle unterminated strings - find strings that don't have closing quotes
+  // This regex finds quoted strings that end at the end of the string or before a closing brace/bracket
+  // More robust approach: iterate through the string and fix unterminated strings
+  fixed = fixUnterminatedStrings(fixed);
+  
+  // Fix 2: Remove trailing commas before closing braces/brackets
+  fixed = fixed.replace(/,\s*([}\]])/g, '$1');
+  
+  // Fix 3: Handle truncated JSON by attempting to close open structures
+  // Count open/close braces and brackets
+  let openBraces = (fixed.match(/\{/g) || []).length;
+  let closeBraces = (fixed.match(/\}/g) || []).length;
+  let openBrackets = (fixed.match(/\[/g) || []).length;
+  let closeBrackets = (fixed.match(/\]/g) || []).length;
+  
+  // Add missing closing braces/brackets
+  fixed += '} '.repeat(openBraces - closeBraces);
+  fixed += '] '.repeat(openBrackets - closeBrackets);
+  
+  // Fix 4: Handle escaped newlines in strings that might be broken
+  fixed = fixed.replace(/\\n/g, ' ');
+  fixed = fixed.replace(/\\r/g, ' ');
+  
+  // Fix 5: Remove any trailing non-JSON text after the last valid closing brace/bracket
+  const lastValidEnd = Math.max(
+    fixed.lastIndexOf('}'),
+    fixed.lastIndexOf(']')
+  );
+  if (lastValidEnd !== -1 && lastValidEnd < fixed.length - 1) {
+    fixed = fixed.slice(0, lastValidEnd + 1);
+  }
+  
+  // Fix 6: Handle missing quotes around property names (common in truncated responses)
+  fixed = fixed.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)/g, '$1"$2"$3');
+  
+  return fixed;
+}
+
+function fixUnterminatedStrings(str) {
+  let result = '';
+  let inString = false;
+  let escaped = false;
+  let stringStart = -1;
+  
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    const nextChar = str[i + 1] || '';
+    
+    if (!inString) {
+      if (char === '"' && !escaped) {
+        inString = true;
+        stringStart = i;
+        escaped = false;
+      }
+      result += char;
+    } else {
+      if (char === '\\' && !escaped) {
+        escaped = true;
+        result += char;
+      } else if (char === '"' && !escaped) {
+        // End of string
+        inString = false;
+        escaped = false;
+        result += char;
+      } else {
+        // Check if we're at a position where the string should end but doesn't
+        // This happens when we encounter a structural character (}, ], ,) without a closing quote
+        const isStructuralChar = (char === '}' || char === ']' || char === ',') && !escaped;
+        const isWhitespaceThenStructural = /\s/.test(char) && 
+          (nextChar === '}' || nextChar === ']' || nextChar === ',') && !escaped;
+        
+        if (isStructuralChar || isWhitespaceThenStructural) {
+          // String is unterminated - close it
+          inString = false;
+          escaped = false;
+          result += '"' + char;
+        } else {
+          result += char;
+        }
+        escaped = false;
+      }
+    }
+  }
+  
+  // If we're still in a string at the end, close it
+  if (inString) {
+    result += '"';
+  }
+  
+  return result;
+}
+
 function parseJsonResponse(text, options = {}) {
-  const cleaned = String(text || '')
-    .trim()
+  const rawText = String(text || '').trim();
+  // Remove markdown code fences
+  let cleaned = rawText
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```$/, '');
-  const parsed = JSON.parse(cleaned);
+  
+  // Try to parse as-is first
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (parseError) {
+    // If parsing fails, try to extract a valid JSON object from the response
+    // Look for the first complete JSON object in the text
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        parsed = JSON.parse(jsonMatch[0]);
+      } catch (secondError) {
+        // If still fails, try to fix common issues like unterminated strings
+        const fixed = fixCommonJsonIssues(jsonMatch[0]);
+        try {
+          parsed = JSON.parse(fixed);
+        } catch (thirdError) {
+          throw new Error(`Gemini response was not valid JSON: ${parseError.message}. Raw response (first 500 chars): ${cleaned.slice(0, 500)}`);
+        }
+      }
+    } else {
+      throw new Error(`Gemini response did not contain a JSON object. Raw response (first 500 chars): ${cleaned.slice(0, 500)}`);
+    }
+  }
   if (!parsed || typeof parsed !== 'object') {
     throw new Error('Gemini response was not a JSON object.');
   }
@@ -534,10 +663,42 @@ async function callOnce({
     const bodyText = await response.text();
     if (!response.ok) {
       const failure = classifyFailure(response.status, bodyText);
-      const retryAfter = Number(response.headers.get('retry-after'));
-      const cooldown = Number.isFinite(retryAfter) && retryAfter > 0
-        ? Math.max(retryAfter * 1000, 5000)
-        : DEFAULT_COOLDOWN_MS;
+      let cooldown = DEFAULT_COOLDOWN_MS;
+      
+      // Extract retry-after from headers (could be seconds or HTTP date)
+      const retryAfterHeader = response.headers.get('retry-after');
+      if (retryAfterHeader) {
+        const retryAfterSec = Number(retryAfterHeader);
+        if (Number.isFinite(retryAfterSec) && retryAfterSec > 0) {
+          cooldown = Math.max(retryAfterSec * 1000, 5000);
+        } else {
+          // Try parsing as HTTP date
+          const retryDate = new Date(retryAfterHeader);
+          if (!isNaN(retryDate.getTime())) {
+            const msUntil = retryDate.getTime() - Date.now();
+            if (msUntil > 0) cooldown = Math.max(msUntil, 5000);
+          }
+        }
+      }
+      
+      // Also check for retry delay in response body (Google API style)
+      try {
+        const errorBody = JSON.parse(bodyText);
+        if (errorBody.error && errorBody.error.details) {
+          for (const detail of errorBody.error.details) {
+            if (detail['@type'] === 'type.googleapis.com/google.rpc.RetryInfo' && detail.retryDelay) {
+              const delayMatch = detail.retryDelay.match(/^(\d+)s$/);
+              if (delayMatch) {
+                const delayMs = parseInt(delayMatch[1], 10) * 1000;
+                cooldown = Math.max(delayMs, cooldown);
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore parse errors
+      }
+      
       throw Object.assign(
         new GeminiServiceError(
           `Gemini request failed (${response.status}): ${failure.code}.`,
@@ -648,9 +809,11 @@ async function analyzeImage(buffer, options = {}) {
   const cooling = keys.length - available.length;
 
   let stopAllKeys = false;
+  
   for (const key of available) {
     if (stopAllKeys) break;
     let lastError = null;
+    
     for (let attempt = 0; attempt <= geminiSettings.maxRetries; attempt += 1) {
       try {
         const parsed = await callOnce({
@@ -712,6 +875,17 @@ async function analyzeImage(buffer, options = {}) {
           retryable: Boolean(error.retryable),
           code: error.code || 'gemini_error',
         };
+        
+        // Handle rate limits (429) - fail over to next key rather than retrying the same key
+        // This matches the expected behavior in tests and handles the case where keys
+        // might be from different projects with separate quotas
+        if (failure.kind === 'rate_limit') {
+          // Mark this key as cooling down (with the cooldown from retry-after or default)
+          markFailure(key, failure, error.cooldown || DEFAULT_COOLDOWN_MS);
+          // Don't retry the same key on rate limit - break to try next key immediately (failover)
+          break;
+        }
+        
         if (failure.kind === 'request' || !failure.retryable) {
           if (failure.kind === 'key') {
             markFailure(key, failure, error.cooldown || DEFAULT_COOLDOWN_MS);

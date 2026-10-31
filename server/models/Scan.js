@@ -70,6 +70,24 @@ const scanSchema = new mongoose.Schema(
     defects: { type: mongoose.Schema.Types.Mixed, default: null },
     warnings: { type: [String], default: [] },
 
+    // Majority grade calculation (calculated at prediction time and stored)
+    majorityGrade: {
+      type: String,
+      enum: ['Grade A', 'Grade B', 'Grade C', 'Grade D', 'Joint', 'Not Available'],
+      default: 'Not Available',
+    },
+    majorityGradeCount: { type: Number, default: 0 },
+    majorityGradePercentage: { type: Number, default: null },
+    majorityGradeDetails: { type: mongoose.Schema.Types.Mixed, default: null },
+
+    // Multi-model inference fields for Grade C/D fallback
+    cDModelUsed: {
+      type: String,
+      enum: ['primary_yolo', 'gemini_advisory', 'huggingface', 'roboflow', 'custom', 'none'],
+      default: 'none',
+    },
+    alternativeModelResult: { type: mongoose.Schema.Types.Mixed, default: null },
+
     modelId: { type: String, default: null },
     modelVersion: { type: String, default: null },
     modelChecksum: { type: String, default: null },

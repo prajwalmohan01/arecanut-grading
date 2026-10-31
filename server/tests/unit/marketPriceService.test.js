@@ -394,6 +394,10 @@ test('public AGMARKNET dashboard reports no records instead of inventing a quote
     if (url.includes('/daily-price-arrival/filters')) {
       return jsonResponse(filtersPayload());
     }
+    if (url.includes('mandi-api.onrender.com/v1/prices')) {
+      // Mandi API fallback - return no data
+      return jsonResponse({ success: true, data: [], meta: { count: 0 } });
+    }
     return jsonResponse({
       status: 'success',
       pagination: { total_count: 0 },
@@ -407,7 +411,7 @@ test('public AGMARKNET dashboard reports no records instead of inventing a quote
       error.code === 'no_records' &&
       /No price is invented/i.test(error.message)
   );
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3); // filters + dashboard + mandi-api
 });
 
 test('public source falls back to data.gov.in when its key is configured', async (t) => {
@@ -417,6 +421,10 @@ test('public source falls back to data.gov.in when its key is configured', async
   mockFetch(t, async (url) => {
     if (url.includes('/daily-price-arrival/filters')) {
       return jsonResponse({ detail: 'temporarily unavailable' }, 503);
+    }
+    if (url.includes('mandi-api.onrender.com/v1/prices')) {
+      // Mandi API fallback - also fail
+      return jsonResponse({ success: false, error: { message: 'No data available' } }, 503);
     }
     return jsonResponse({
       total: 1,
@@ -434,6 +442,7 @@ test('public source falls back to data.gov.in when its key is configured', async
   assert.equal(result.source, 'data_gov_in');
   assert.equal(result.fallbackFrom, 'agmarknet_public');
   assert.match(result.fallbackReason, /HTTP 503/);
+  assert.match(result.fallbackReason, /Mandi API fallback also failed/);
   assert.equal(result.price.pricePerKg, 355);
   assert.equal(created[0].source, 'data_gov_in');
 });

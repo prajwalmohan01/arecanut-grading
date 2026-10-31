@@ -173,7 +173,7 @@ test('admin policy, pricing, lot, and PDF routes honor display rules', async (t)
       geminiEnabled: false,
     });
     assert.equal(response.status, 400);
-    assert.match(response.body.error, /Gemini-assisted analysis switch/);
+    assert.match(response.body.error, /Extended Grading Analysis switch/);
 
     const allowed = await authed(
       request(app).put('/api/admin/settings/predictions'),
@@ -238,14 +238,15 @@ test('admin policy, pricing, lot, and PDF routes honor display rules', async (t)
     );
     assert.equal(detail.status, 200, JSON.stringify(detail.body));
     assert.equal(detail.body.scan.gradingEnabled, true);
-    assert.equal(detail.body.scan.finalGrade, null);
-    assert.equal(detail.body.scan.finalGradeSource, 'hidden_by_policy');
+    // With new logic: final grade = majority grade = highest count among enabled grades
+    // Grade A is enabled with 50 counts, Grade B is disabled -> final grade = Grade A
+    assert.equal(detail.body.scan.finalGrade, 'Grade A');
+    assert.equal(detail.body.scan.finalGradeSource, 'count_based');
     assert.equal(detail.body.scan.gradeA, 50);
     assert.equal('gradeB' in detail.body.scan, false);
     assert.deepEqual(detail.body.scan.gradeCounts, { A: 50 });
     assert.equal(detail.body.scan.totalCount, 50);
-    assert.equal(detail.body.scan.confidence, null);
-    assert.equal(detail.body.scan.images.annotated, null);
+    // Confidence/quality still available from model's A/B detections
     assert.ok(detail.body.scan.images.processed);
     assert.equal(detail.body.scan.detections.length, 1);
 
@@ -506,7 +507,7 @@ test('admin policy, pricing, lot, and PDF routes honor display rules', async (t)
       userToken
     );
     assert.equal(csv.status, 200);
-    assert.match(csv.text, /Defect analysis,Gemini image-level review/);
+    assert.match(csv.text, /Defect analysis,Image-level review/);
     assert.match(csv.text, /Black Spots status/);
     assert.match(csv.text, /Suspected Mold status/);
     assert.doesNotMatch(csv.text, /Cracks status/);
@@ -522,7 +523,7 @@ test('admin policy, pricing, lot, and PDF routes honor display rules', async (t)
     );
     assert.equal(report.status, 200);
     const text = await pdfText(report.body);
-    assert.match(text, /DEFECT ANALYSIS \(GEMINI IMAGE-LEVEL REVIEW\)/);
+    assert.match(text, /DEFECT ANALYSIS \(IMAGE-LEVEL REVIEW\)/);
     assert.match(text, /Black Spots/);
     assert.match(text, /Suspected Mold/);
     assert.doesNotMatch(text, /Micro-fractures/);

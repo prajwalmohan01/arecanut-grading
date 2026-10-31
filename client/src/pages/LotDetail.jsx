@@ -575,7 +575,7 @@ export default function LotDetail() {
             </div>
             <p className="mt-4 text-[11px] leading-relaxed text-muted">
               Only enabled classes with a validated detector are counted. Grade C/D remain
-              uncounted unless a four-class detector is installed; Gemini advisories never create
+              uncounted unless a four-class detector is installed; extended advisories never create
               counts, boxes, confidence, or percentages.
             </p>
             {totals.scanCount === 0 && (

@@ -141,7 +141,14 @@ export default function Upload() {
   ).length;
   const successCount = files.filter((item) => item.status === 'done').length;
   const failedCount = files.filter((item) => item.status === 'error').length;
-  const overallPct = files.length ? Math.round((finishedCount / files.length) * 100) : 0;
+
+  // Calculate overall progress including current file's upload progress
+  // This gives a smooth 1-100 progress instead of jumping by file
+  const currentUploading = files.find((item) => item.status === 'uploading');
+  const currentFilePct = currentUploading ? currentUploading.pct : 0;
+  const overallPct = files.length
+    ? Math.min(100, Math.round(((finishedCount + currentFilePct / 100) / files.length) * 100))
+    : 0;
 
   function updateItem(id, patch) {
     setFiles((current) =>
@@ -249,7 +256,7 @@ export default function Upload() {
   async function submit(event) {
     event?.preventDefault();
     if (!gradingOn) {
-      setError('AI grading is disabled by the administrator. Predictions are not run while master prediction is off.');
+      setError('Automated grading is disabled by the administrator. Predictions are not run while master prediction is off.');
       return;
     }
     if (files.length === 0) {
@@ -539,7 +546,7 @@ export default function Upload() {
                             {item.status === 'done' && item.scan
                               ? gradingOn && item.scan.finalGrade
                                 ? item.scan.finalGradeSource === 'gemini_advisory'
-                                  ? ` · ${item.scan.finalGrade} Gemini advisory (no nut count)`
+                                  ? ` · ${item.scan.finalGrade} Extended Grading Analysis (no nut count)`
                                   : ` · ${item.scan.finalGrade}, ${formatNumber(
                                       item.scan.totalCount
                                     )} nuts`
@@ -738,7 +745,7 @@ export default function Upload() {
                 ['Grade A vs Grade B', true],
                 ['Image-level majority grade', true],
                 ['Bounding boxes + confidence', true],
-                ['C / D grades (Gemini advisory only, never counted)', false],
+                ['C / D grades (Extended Grading Analysis only, never counted)', false],
                 ['Defect categories', false],
                 ['Physical size in mm', false],
               ].map(([label, supported]) => (

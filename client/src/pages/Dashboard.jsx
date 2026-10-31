@@ -196,7 +196,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-5">
-      <PolicyNotice policy={policy} showPricing />
+    
       <Card className="relative overflow-hidden p-6 animate-in">
         <div
           className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full opacity-50 blur-3xl"
@@ -381,7 +381,7 @@ export default function Dashboard() {
                     ))}
                   </div>
                   <p className="mt-2 text-[11px] leading-relaxed text-muted">
-                    Grade C/D stay uncounted unless a validated C/D detector is installed. Gemini
+                    Grade C/D stay uncounted unless a validated C/D detector is installed. Extended analysis
                     advisories remain image-level and never create counts or boxes.
                   </p>
                 </Card>
@@ -405,7 +405,7 @@ export default function Dashboard() {
                     Defect findings
                   </h3>
                   <p className="mt-1 text-xs text-muted">
-                    Gemini image-level review across analysed images. These are status counts, not
+                    Extended image-level review across analysed images. These are status counts, not
                     affected-nut counts.
                   </p>
                 </div>
@@ -565,7 +565,7 @@ export default function Dashboard() {
             {[
               ['Lighting', 'Use even, bright light and avoid harsh shadows across the tray.'],
               ['Framing', 'Keep every nut inside the frame with minimal overlap and clutter.'],
-              ['Scope', 'Only grades and defect categories enabled by the administrator are predicted. C/D require a validated four-class detector; Gemini advisories never create counts or boxes. Defect findings are image-level and never claim affected-nut counts or fungal confirmation.'],
+              ['Scope', 'Only grades and defect categories enabled by the administrator are predicted. C/D require a validated four-class detector; An any advisories(ai) never create counts or boxes. Defect findings are image-level and never claim affected-nut counts or fungal confirmation.'],
             ].map(([title, body]) => (
               <div key={title} className="card p-4 animate-in">
                 <p className="text-xs font-bold uppercase tracking-[0.16em] text-muted">{title}</p>

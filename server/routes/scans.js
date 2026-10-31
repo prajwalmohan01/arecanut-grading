@@ -20,6 +20,7 @@ const {
 } = require('../utils/files');
 const { parseDate, parsePagination } = require('../utils/validation');
 const { runInference } = require('../services/inferenceService');
+const { runMultiModelInference } = require('../services/multiModelInferenceService');
 const {
   getModelStatus,
   getEvaluationReport,
@@ -54,7 +55,6 @@ const {
 const {
   DEFECT_KEYS,
   DEFECT_LABELS,
-  buildUnavailableDefects,
 } = require('../services/defectService');
 
 const router = express.Router();
@@ -158,7 +158,7 @@ async function runGeminiAnalysis({
 
   if (!policy.geminiEnabled) {
     return unavailable(
-      'Gemini-assisted analysis is disabled by the administrator or unavailable.',
+      'Extended Grading Analysis is disabled by the administrator or unavailable.',
       'gemini_disabled'
     );
   }
@@ -190,7 +190,7 @@ async function runGeminiAnalysis({
     };
   } catch (error) {
     return unavailable(
-      error.message || 'Gemini-assisted analysis failed.',
+      error.message || 'Extended Grading Analysis failed.',
       error.code || 'gemini_unavailable'
     );
   }
@@ -382,19 +382,16 @@ router.post(
 
     let inference;
     try {
-      inference = await runInference(uploadedPath);
+      // Use multi-model inference for Grade C/D fallback support
+      inference = await runMultiModelInference(uploadedPath, settings, policy);
     } catch (error) {
       removeTempFile(uploadedPath);
       throw error;
     }
 
-    const gemini = await runGeminiAnalysis({
-      uploadedPath,
-      settings,
-      inference,
-      policy,
-    });
-    const advisory = gemini.advisory;
+    // The multi-model inference already includes Gemini advisory and alternative model results
+    const advisory = inference.advisory;
+    const alternativeModelResult = inference.alternativeModelResult;
 
     const enabledAb = policy.enabledLetters.filter(
       (letter) =>
@@ -409,33 +406,22 @@ router.post(
     if (
       onlyAdvisoryGrades &&
       (!advisory || advisory.status !== 'ok') &&
-      !defectsRequested
+      !defectsRequested &&
+      !alternativeModelResult
     ) {
       removeTempFile(uploadedPath);
       return res.status(503).json({
         error:
           (advisory && advisory.limitations && advisory.limitations[0]) ||
-          'Only Grade C/D is enabled, but Gemini-assisted review is unavailable. No grade or count was invented.',
+          'Only Grade C/D is enabled, but no Grade C/D assessment method is available. No grade or count was invented.',
         geminiAdvisory: advisory,
+        alternativeModelResult,
         policy,
       });
     }
 
     let finalGrade = inference.finalGrade;
-    let finalGradeSource = 'model';
-    if (onlyAdvisoryGrades) {
-      const advisoryGrade = selectAdvisoryFinalGrade(
-        advisory,
-        policy.enabledLetters
-      );
-      if (advisoryGrade) {
-        finalGrade = advisoryGrade;
-        finalGradeSource = 'gemini_advisory';
-      } else {
-        finalGrade = 'Invalid';
-        finalGradeSource = 'none';
-      }
-    }
+    let finalGradeSource = inference.finalGradeSource || 'model';
 
     let annotatedImage = null;
     let processedImage = null;
@@ -480,7 +466,7 @@ router.post(
         settingsSnapshot: settingsSnapshot(settings),
         detections: inference.detections,
         measurements: inference.measurements,
-        defects: gemini.defects,
+        defects: inference.defects,
         warnings: inference.warnings,
         modelId: inference.model.id || null,
         modelVersion: inference.model.version || null,
@@ -490,6 +476,13 @@ router.post(
         imageHeight: inference.image.height || null,
         lot: lotId || null,
         user: req.user._id,
+        cDModelUsed: inference.cDModelUsed || 'none',
+        alternativeModelResult: inference.alternativeModelResult || null,
+        // Majority grade fields
+        majorityGrade: inference.majorityGrade || 'Not Available',
+        majorityGradeCount: inference.majorityGradeCount || 0,
+        majorityGradePercentage: inference.majorityGradePercentage ?? null,
+        majorityGradeDetails: inference.majorityGradeDetails || null,
       });
 
       const view = await presentScan(scan, settings, {
@@ -618,7 +611,7 @@ router.get(
           count: supported ? Math.round(gradeSums[letter]) : null,
           reason: supported
             ? null
-            : 'No validated Grade C/D detector is installed; Gemini advisory does not create counts.',
+            : 'No validated Grade C/D detector is installed; extended analysis advisory does not create counts.',
         };
         if (supported) summary.totalNuts += gradeSums[letter];
       });
@@ -724,7 +717,7 @@ router.get(
     );
     lines.push(`Pricing mode,${policy.pricingMode}`);
     if (enabledDefectKeys.length) {
-      lines.push('Defect analysis,Gemini image-level review');
+      lines.push('Defect analysis,Image-level review');
       lines.push(
         `Enabled defects,${enabledDefectKeys.map((key) => DEFECT_LABELS[key]).join('; ')}`
       );
@@ -943,7 +936,7 @@ router.get(
           supported,
           reason: supported
             ? null
-            : 'No validated Grade C/D detector; Gemini advisory is not a count.',
+            : 'No validated Grade C/D detector; extended analysis advisory is not a count.',
         });
       });
       totals.invalid = counts.Invalid || 0;
@@ -1153,7 +1146,7 @@ router.post(
     if (!policy.geminiEnabled) {
       return res.status(409).json({
         error:
-          'Gemini-assisted analysis is disabled by the administrator. Ask an administrator to enable it and configure a server-side key.',
+          'Extended Grading Analysis is disabled by the administrator. Ask an administrator to enable it and configure a server-side key.',
         policy,
       });
     }
@@ -1204,6 +1197,10 @@ router.post(
       scan.finalGradeSource = advisoryGrade ? 'gemini_advisory' : 'none';
       scan.confidence = null;
       scan.qualityScore = null;
+      // Update cDModelUsed when Gemini advisory provides C/D assessment
+      if (advisoryGrade && ['Grade C', 'Grade D'].includes(advisoryGrade)) {
+        scan.cDModelUsed = 'gemini_advisory';
+      }
     }
     await scan.save();
 
@@ -1219,9 +1216,9 @@ router.post(
       analysisUnavailable: unavailable,
       message:
         analysisStatus === 'success'
-          ? 'Gemini defect analysis refreshed.'
+          ? 'Extended defect analysis refreshed.'
           : analysisStatus === 'partial'
-          ? 'Gemini defect analysis completed, but some enabled categories are still unavailable.'
+          ? 'Extended defect analysis completed, but some enabled categories are still unavailable.'
           : view.defects?.error ||
             'Defect analysis is unavailable. No defect status was inferred; this is not a "not detected" result.',
       scan: view,

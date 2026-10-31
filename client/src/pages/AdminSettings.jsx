@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import API, { apiErrorMessage } from '../api/axios';
 import { usePolicy } from '../context/PolicyContext';
 import { useToast } from '../context/ToastContext';
@@ -131,7 +131,7 @@ export default function AdminSettings() {
   const modelIssue = useMemo(() => {
     if (!predictions) return null;
     if (predictions.masterEnabled && (predictions.grades.C || predictions.grades.D) && !predictions.geminiEnabled) {
-      return 'Grade C/D requires Gemini-assisted review. Enable the Gemini switch or turn C/D off.';
+      return 'Grade C/D requires Extended Grading Analysis. Enable the Extended Analysis switch or turn C/D off.';
     }
     if (predictions.masterEnabled && !GRADE_LETTERS.some((letter) => predictions.grades[letter])) {
       return 'Enable at least one grade while master prediction is on.';
@@ -142,7 +142,7 @@ export default function AdminSettings() {
   const defectIssue = useMemo(() => {
     if (!defectsForm) return null;
     if (predictions?.masterEnabled && defectsForm.masterEnabled && !predictions?.geminiEnabled) {
-      return 'Defect review is powered by Gemini. With Gemini-assisted analysis off, enabled defect categories will show “Analysis unavailable” rather than “Not detected”.';
+      return 'Defect review is powered by the grading service. With Extended Grading Analysis off, enabled defect categories will show "Analysis unavailable" rather than "Not detected".';
     }
     if (predictions?.masterEnabled && defectsForm.masterEnabled) {
       const enabled = Object.values(defectsForm.categories || {}).filter(Boolean).length;
@@ -229,10 +229,10 @@ export default function AdminSettings() {
       const response = await API.put('/admin/settings/gemini', geminiForm);
       adopt(response.data, { keepDraft: true });
       setGeminiForm(clone(response.data.settings.gemini));
-      toast.success(response.data.message || 'Gemini settings saved.');
+      toast.success(response.data.message || 'Extended Analysis settings saved.');
       await loadAudit();
     } catch (err) {
-      toast.error(apiErrorMessage(err, 'Could not save Gemini settings.'));
+      toast.error(apiErrorMessage(err, 'Could not save Extended Analysis settings.'));
     } finally {
       setSaving('');
     }
@@ -338,7 +338,7 @@ export default function AdminSettings() {
               <ShieldCheckIcon width={14} height={14} /> Administrator controls
             </p>
             <h2 className="mt-1 font-display text-2xl font-semibold text-main">
-              Grading, Gemini &amp; market policy
+              Grading, Extended Analysis &amp; market policy
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">
               Switches apply server-side to prediction responses, history, statistics, exports,
@@ -359,7 +359,7 @@ export default function AdminSettings() {
             <StatusPill ok={policy.defectDetectionEnabled}>
               Defects {policy.defectDetectionEnabled ? 'on' : 'off'}
             </StatusPill>
-            <StatusPill ok={policy.geminiEnabled}>Gemini {policy.geminiEnabled ? 'on' : 'off'}</StatusPill>
+            <StatusPill ok={policy.geminiEnabled}>Extended Analysis {policy.geminiEnabled ? 'on' : 'off'}</StatusPill>
             <StatusPill ok={policy.pricingMode !== 'none'}>
               Pricing {policy.pricingMode === 'none' ? 'off' : policy.pricingMode}
             </StatusPill>
@@ -384,7 +384,7 @@ export default function AdminSettings() {
             <ToggleRow
               id="master-prediction"
               label="Master prediction"
-              description="Global switch for every AI grading output and price estimate."
+              description="Global switch for every automated grading output and price estimate."
               checked={predictions?.masterEnabled}
               onChange={(value) => patchPrediction('masterEnabled', value)}
               tone={predictions?.masterEnabled ? 'default' : 'danger'}
@@ -396,7 +396,7 @@ export default function AdminSettings() {
                 label={`Grade ${letter}`}
                 description={
                   letter === 'C' || letter === 'D'
-                    ? 'No validated C/D detector is installed. This requires Gemini-assisted visual review and still does not create per-nut counts.'
+                    ? 'No validated C/D detector is installed. This requires Extended Grading Analysis and still does not create per-nut counts.'
                     : 'Enabled grades are returned by the model and included in counts, pages, CSV, and PDFs.'
                 }
                 checked={predictions?.grades?.[letter]}
@@ -406,8 +406,8 @@ export default function AdminSettings() {
             ))}
             <ToggleRow
               id="gemini-assisted"
-              label="Gemini-assisted analysis"
-              description="Advisory image-level review for C/D hints and enabled defect categories. Gemini is never used as an object detector and never creates counts or bounding boxes."
+              label="Extended Grading Analysis"
+              description="Advisory image-level review for C/D hints and enabled defect categories. This analysis is never used as an object detector and never creates counts or bounding boxes."
               checked={predictions?.geminiEnabled}
               onChange={(value) => patchPrediction('geminiEnabled', value)}
               disabled={!predictions?.masterEnabled}
@@ -435,7 +435,7 @@ export default function AdminSettings() {
             <div>
               <h3 className="font-display text-lg font-semibold text-main">Defect detection</h3>
               <p className="mt-1 text-xs leading-relaxed text-muted">
-                Gemini reviews the original uploaded image for visible defect appearance. Findings
+                Extended analysis reviews the original uploaded image for visible defect appearance. Findings
                 are image-level only and never downgrade a grade automatically.
               </p>
             </div>
@@ -475,9 +475,9 @@ export default function AdminSettings() {
           )}
 
           <div className="mt-3 rounded-2xl bg-[color:var(--panel-soft)] p-3 text-[11px] leading-relaxed text-muted">
-            Gemini cannot establish verified affected-nut counts, defect locations, bounding boxes,
+            Extended analysis cannot establish verified affected-nut counts, defect locations, bounding boxes,
             or fungal confirmation. Those fields stay unavailable until a validated defect detector
-            or segmentation model is installed. A failed Gemini request is shown as “Analysis
+            or segmentation model is installed. A failed analysis request is shown as “Analysis
             unavailable” with a retry action — never as “Not detected”.
           </div>
 
@@ -493,7 +493,7 @@ export default function AdminSettings() {
         <Card className="p-5 animate-in">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h3 className="font-display text-lg font-semibold text-main">Gemini advisory</h3>
+              <h3 className="font-display text-lg font-semibold text-main">Extended Grading Analysis</h3>
               <p className="mt-1 text-xs leading-relaxed text-muted">
                 Keys are read only from server environment variables and are never shown or
                 written to the audit log. Used for C/D advisories and enabled defect categories.
@@ -573,8 +573,8 @@ export default function AdminSettings() {
             <div className="alert alert-warn mt-3 items-start text-xs">
               <AlertIcon width={15} height={15} />
               <span>
-                No Gemini key is configured. Grade C/D review and defect analysis cannot run until
-                a server-side GEMINI_API_KEY is added and the backend is restarted.
+                No grading service key is configured. Grade C/D review and defect analysis cannot run until
+                a server-side service key is added and the backend is restarted.
               </span>
             </div>
           )}
@@ -582,7 +582,7 @@ export default function AdminSettings() {
           <div className="mt-4 flex justify-end">
             <Button onClick={saveGemini} disabled={saving === 'gemini'}>
               {saving === 'gemini' ? <Spinner size={14} /> : <CheckIcon width={15} height={15} />}
-              {saving === 'gemini' ? 'Saving…' : 'Save Gemini'}
+              {saving === 'gemini' ? 'Saving…' : 'Save Extended Analysis'}
             </Button>
           </div>
         </Card>
@@ -865,7 +865,7 @@ export default function AdminSettings() {
         <AlertIcon width={16} height={16} />
         <span>
           C/D grades are not supported by the bundled two-class model and cannot be counted.
-          Gemini output is advisory image-level review only. Defect locations, verified
+          Extended analysis output is advisory image-level review only. Defect locations, verified
           affected-nut counts, and fungal confirmation require a validated detector and are never
           invented. Market quotes are daily AGMARKNET values and not a guaranteed transaction
           price. Prices and estimates are never shown while pricing is off.

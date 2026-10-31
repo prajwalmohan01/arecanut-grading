@@ -269,7 +269,7 @@ export default function ManualNew() {
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone="a">Manual grade</Badge>
               <Badge tone="neutral">A / B only</Badge>
-              <Badge tone="neutral">No AI inference</Badge>
+              <Badge tone="neutral">No automated inference</Badge>
             </div>
           </div>
 
@@ -692,7 +692,7 @@ export default function ManualNew() {
               <div className="mt-4 rounded-2xl border border-[color:var(--border)] bg-[color:var(--panel-soft)] p-3">
                 <p className="flex items-start gap-2 text-[11px] leading-relaxed text-muted">
                   <CheckIcon width={15} height={15} className="mt-0.5 shrink-0 text-accent" />
-                  The grade is stored exactly as you selected it. This is not an AI prediction,
+                  The grade is stored exactly as you selected it. This is not an automated prediction,
                   laboratory test, or officially accredited certificate.
                 </p>
               </div>

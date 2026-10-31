@@ -80,8 +80,9 @@ const config = {
   geminiMaxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 1600),
 
   // AGMARKNET daily mandi prices. The public AGMARKNET 2.0 dashboard is the
-  // default keyless source. data.gov.in remains an optional fallback when a
-  // free DATA_GOV_IN_API_KEY (or legacy AGMARKNET_API_KEY) is configured.
+  // default keyless source. Mandi API (mandi-api.onrender.com) provides a
+  // keyless fallback covering 5 states (incl. Karnataka). data.gov.in remains
+  // an optional fallback when a free DATA_GOV_IN_API_KEY (or legacy AGMARKNET_API_KEY) is configured.
   marketSource: String(process.env.MARKET_PRICE_SOURCE || 'agmarknet_public')
     .trim()
     .toLowerCase(),
@@ -156,9 +157,9 @@ function validateConfig() {
   ) {
     warnings.push('GEMINI_IMAGE_MAX_DIMENSION should be at least 256.');
   }
-  if (!['agmarknet_public', 'data_gov_in'].includes(config.marketSource)) {
+  if (!['agmarknet_public', 'mandi_api', 'data_gov_in'].includes(config.marketSource)) {
     errors.push(
-      "MARKET_PRICE_SOURCE must be 'agmarknet_public' (default) or 'data_gov_in'."
+      "MARKET_PRICE_SOURCE must be 'agmarknet_public' (default), 'mandi_api', or 'data_gov_in'."
     );
   }
   if (!/^https:\/\//i.test(config.marketPublicBaseUrl || '')) {
@@ -184,7 +185,7 @@ function validateConfig() {
     ].some((name) => String(process.env[name] || '').trim())
   ) {
     warnings.push(
-      'GEMINI_ENABLED=true but no GEMINI_API_KEY or GEMINI_API_KEY_1..10 is configured. Gemini-assisted review will be unavailable.'
+      'GRADING_SERVICE_ENABLED=true but no GRADING_SERVICE_API_KEY is configured. Extended analysis will be unavailable.'
     );
   }
 

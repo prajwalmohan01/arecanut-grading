@@ -428,7 +428,7 @@ export default function History() {
             <div>
               <h3 className="font-display text-base font-semibold text-main">Defect findings</h3>
               <p className="mt-1 text-[11px] leading-relaxed text-muted">
-                Gemini image-level review across matching predictions. Counts show how many stored
+                Extended image-level review across matching predictions. Counts show how many stored
                 analyses returned each status; they are not affected-nut counts.
               </p>
             </div>

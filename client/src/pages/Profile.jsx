@@ -381,7 +381,7 @@ export default function Profile() {
       <Card className="flex items-start gap-3 p-4 text-xs leading-relaxed text-muted animate-in">
         <ProfileIcon width={17} height={17} className="mt-0.5 shrink-0" />
         <p className="min-w-0 break-words">
-          © 2026 Prajwal Mohan | Arecanut Quality Grading System | AI-Powered Detection & Grading | Contact: +91 76767 59149
+          © 2026 Prajwal Mohan | Arecanut Quality Grading System | Automated Detection & Grading | Contact: +91 76767 59149
         </p>
       </Card>
 

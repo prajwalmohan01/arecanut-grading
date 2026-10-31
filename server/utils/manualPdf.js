@@ -372,7 +372,7 @@ async function buildManualRecordPdf({ record, batch, imageBuffer }) {
   callout(
     doc,
     'Manual assessment',
-    'This grade was selected manually by the user. It is not an AI prediction. This application-generated record is not an officially accredited certificate.',
+    'This grade was selected manually by the user. It is not an automated prediction. This application-generated record is not an officially accredited certificate.',
     'mint'
   );
 
@@ -557,7 +557,7 @@ async function buildManualBatchPdf({ batch, stats, records, imageNote }) {
   callout(
     doc,
     'About this report',
-    'All grades in this report were selected manually by the user. The application does not predict grades with AI. Totals only include values that were actually entered and saved.',
+    'All grades in this report were selected manually by the user. The application does not predict grades automatically. Totals only include values that were actually entered and saved.',
     'mint'
   );
 

@@ -264,11 +264,11 @@ test('PDF includes enabled defect findings and omits disabled categories and unv
   const pdf = await buildPredictionReport(view, images);
   const text = await textOf(pdf);
 
-  assert.match(text, /DEFECT ANALYSIS \(GEMINI IMAGE-LEVEL REVIEW\)/);
+  assert.match(text, /DEFECT ANALYSIS \(IMAGE-LEVEL REVIEW\)/);
   assert.match(text, /Black Spots/);
   assert.match(text, /Suspected Mold/);
   assert.match(text, /Analysis method/);
-  assert.match(text, /Gemini vision, image-level/);
+  assert.match(text, /Automated Vision, Image-Level/);
   assert.match(text, /Not established \(requires a validated detector\)/);
   assert.doesNotMatch(text, /Micro-fractures/);
   assert.doesNotMatch(text, /Colour variation/);
@@ -351,7 +351,7 @@ test('PDF never renders an unavailable defect analysis as \"None detected\" and 
 
   const pdf = await buildPredictionReport(view, images);
   const text = await textOf(pdf);
-  assert.match(text, /DEFECT ANALYSIS \(GEMINI IMAGE-LEVEL REVIEW\)/);
+  assert.match(text, /DEFECT ANALYSIS \(IMAGE-LEVEL REVIEW\)/);
   assert.match(text, /Analysis unavailable/);
   assert.match(text, /This is not a detection result/);
   assert.doesNotMatch(text, /None detected/);
@@ -360,7 +360,7 @@ test('PDF never renders an unavailable defect analysis as \"None detected\" and 
   assert.doesNotMatch(text, /Grade A visible/);
   assert.match(text, /Review recommendation/);
   assert.match(text, /Retake a closer, evenly lit photo/);
-  assert.match(text, /GEMINI VISUAL ADVISORY/);
+  assert.match(text, /EXTENDED GRADING ANALYSIS/);
 });
 
 test('PDF omits defect analysis when master defect detection is off', async () => {

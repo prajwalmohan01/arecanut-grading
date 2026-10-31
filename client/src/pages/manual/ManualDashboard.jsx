@@ -195,7 +195,7 @@ export default function ManualDashboard() {
                 Manual grading workspace
               </p>
               <Badge tone="a">User-assigned grades</Badge>
-              <Badge tone="neutral">No AI prediction</Badge>
+              <Badge tone="neutral">No automated prediction</Badge>
             </div>
             <h2 className="mt-2 font-display text-2xl font-semibold text-main sm:text-3xl">
               Good to see you, {firstName}.

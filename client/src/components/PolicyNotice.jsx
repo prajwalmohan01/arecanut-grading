@@ -18,7 +18,7 @@ export default function PolicyNotice({ policy: suppliedPolicy, className = '', s
       <div className={`alert alert-warn items-start text-xs leading-relaxed ${className}`}>
         <AlertIcon width={17} height={17} />
         <div>
-          <p className="font-semibold">AI grading is disabled by the administrator</p>
+          <p className="font-semibold">Automated grading is disabled by the administrator</p>
           <p className="mt-0.5">
             Grades, counts, percentages, confidence, charts, price estimates, and PDF grade
             sections are suppressed. Historical records remain stored but are filtered
@@ -51,8 +51,8 @@ export default function PolicyNotice({ policy: suppliedPolicy, className = '', s
       <span>
         {showAdvisoryNote && (
           <>
-            Grade {advisoryGrades.join(' / Grade ')} is enabled for Gemini-assisted visual review
-            only. Gemini is not an object detector: it does not create per-nut counts, bounding
+            Grade {advisoryGrades.join(' / Grade ')} is enabled for Extended Grading Analysis visual review
+            only. This analysis is not an object detector: it does not create per-nut counts, bounding
             boxes, or confidence values.
             {(showDefectNote || (showPricing && policy.pricingMode === 'none')) ? ' ' : ''}
           </>

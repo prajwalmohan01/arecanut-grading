@@ -215,7 +215,7 @@ function normalizePredictions(input, current) {
 
   const geminiEnabled = booleanValue(
     input.geminiEnabled,
-    'Gemini-assisted analysis',
+    'Extended Grading Analysis',
     Boolean(base.geminiEnabled)
   );
   const masterEnabled = booleanValue(
@@ -226,7 +226,7 @@ function normalizePredictions(input, current) {
 
   if (masterEnabled && (grades.C || grades.D) && !geminiEnabled) {
     throw new SettingsValidationError(
-      'Grade C/D review requires the Gemini-assisted analysis switch. No validated C/D detector is installed.'
+      'Grade C/D review requires the Extended Grading Analysis switch. No validated C/D detector is installed.'
     );
   }
   if (masterEnabled && !GRADES.some((letter) => grades[letter])) {
@@ -263,20 +263,20 @@ function normalizeDefects(input, current) {
 
 function normalizeGemini(input, current) {
   if (!input || typeof input !== 'object') {
-    throw new SettingsValidationError('Gemini settings are required.');
+    throw new SettingsValidationError('Extended Analysis settings are required.');
   }
   const base = current.gemini;
-  const model = cleanString(input.model, 'Gemini model', 120, base.model);
+  const model = cleanString(input.model, 'Grading Service Model', 120, base.model);
   if (!/^[a-zA-Z0-9._-]+$/.test(model)) {
     throw new SettingsValidationError(
-      'Gemini model may contain only letters, numbers, dots, underscores, and hyphens.'
+      'Grading Service Model may contain only letters, numbers, dots, underscores, and hyphens.'
     );
   }
   return {
     model,
     timeoutMs: numberInRange(
       input.timeoutMs,
-      'Gemini timeout',
+      'Service Timeout',
       3000,
       120000,
       base.timeoutMs,
@@ -284,7 +284,7 @@ function normalizeGemini(input, current) {
     ),
     maxRetries: numberInRange(
       input.maxRetries,
-      'Gemini retries',
+      'Service Retries',
       0,
       5,
       base.maxRetries,
@@ -292,7 +292,7 @@ function normalizeGemini(input, current) {
     ),
     imageMaxDimension: numberInRange(
       input.imageMaxDimension,
-      'Gemini image size',
+      'Service Image Size',
       256,
       4096,
       base.imageMaxDimension,
@@ -518,7 +518,7 @@ async function updateGemini(input, adminUser, meta = {}) {
     next,
     adminUser,
     'gemini_updated',
-    `Gemini settings updated: model=${gemini.model}, timeout=${gemini.timeoutMs}ms, retries=${gemini.maxRetries}`,
+    `Extended Analysis settings updated: model=${gemini.model}, timeout=${gemini.timeoutMs}ms, retries=${gemini.maxRetries}`,
     current,
     meta
   );
@@ -701,20 +701,117 @@ function applyScanPolicy(scan, settings) {
       })
     : null;
 
-  const availability = {};
+  /**
+ * Calculate the majority grade from validated detection counts.
+ * Only considers enabled grades with actual detection counts.
+ * Returns an object with majorityGrade, count, percentage, and details.
+ */
+function calculateMajorityGrade(visibleCounts, policy) {
+  const enabledLetters = policy.enabledLetters || [];
+  // Build grade counts only for enabled letters that have valid counts
+  const gradeCounts = {};
+  let totalValidDetections = 0;
+  
+  enabledLetters.forEach((letter) => {
+    const count = Number(visibleCounts[letter]) || 0;
+    if (count > 0) {
+      gradeCounts[`Grade ${letter}`] = count;
+      totalValidDetections += count;
+    }
+  });
+  
+  // If no valid detections at all
+  if (totalValidDetections === 0) {
+    return {
+      majorityGrade: 'Not Available',
+      majorityGradeCount: 0,
+      majorityGradePercentage: null,
+      majorityGradeDetails: {
+        gradeCounts: {},
+        totalValidDetections: 0,
+        enabledGrades: enabledLetters,
+        message: 'No valid nuts detected in the image.'
+      }
+    };
+  }
+  
+  // Find the maximum count
+  const counts = Object.values(gradeCounts);
+  const maxCount = Math.max(...counts);
+  
+  // Find all grades with the maximum count (handles ties)
+  const majorityGrades = Object.entries(gradeCounts)
+    .filter(([_, count]) => count === maxCount)
+    .map(([grade]) => grade);
+  
+  // Calculate percentage
+  const percentage = Math.round((maxCount / totalValidDetections) * 1000) / 10; // 1 decimal place
+  
+  let majorityGrade;
+  if (majorityGrades.length === 1) {
+    majorityGrade = majorityGrades[0];
+  } else {
+    majorityGrade = `Joint Majority: ${majorityGrades.join(' and ')}`;
+  }
+  
+  // Determine if analysis is incomplete (some enabled grades have no counts due to unsupported models)
+  const unsupportedEnabledGrades = enabledLetters.filter(
+    (letter) => visibleCounts[letter] === null
+  );
+  
+  return {
+    majorityGrade,
+    majorityGradeCount: maxCount,
+    majorityGradePercentage: percentage,
+    majorityGradeDetails: {
+      gradeCounts,
+      totalValidDetections,
+      enabledGrades: enabledLetters,
+      tied: majorityGrades.length > 1,
+      tiedGrades: majorityGrades.length > 1 ? majorityGrades : null,
+      incomplete: unsupportedEnabledGrades.length > 0,
+      unsupportedGrades: unsupportedEnabledGrades.length > 0 ? unsupportedEnabledGrades : null,
+      message: unsupportedEnabledGrades.length > 0
+        ? `Analysis incomplete: Grades ${unsupportedEnabledGrades.join(', ')} are enabled but not supported by the active detector.`
+        : null
+    }
+  };
+}
+
+const availability = {};
   const visibleCounts = {};
   policy.enabledLetters.forEach((letter) => {
     const supported = rawSupported.includes(letter);
+    // Check if an alternative model was used for C/D detection
+    const cDModelUsed = result.cDModelUsed || 'none';
+    const alternativeModelUsed = ['huggingface', 'roboflow', 'custom'].includes(cDModelUsed);
+    const geminiAdvisoryUsed = cDModelUsed === 'gemini_advisory';
+    
+    // For C/D: if alternative model was used, treat as supported with actual counts
+    const isSupported = supported || (['C', 'D'].includes(letter) && alternativeModelUsed);
+    // For C/D: if gemini advisory was used, we have presence info but not counts
+    const hasCount = isSupported && (!['C', 'D'].includes(letter) || alternativeModelUsed);
+    
     availability[letter] = {
       enabled: true,
-      supported,
-      count: supported ? Number(rawCounts[letter]) || 0 : null,
-      reason: supported
+      supported: isSupported,
+      count: hasCount ? Number(rawCounts[letter]) || 0 : null,
+      // Only add reason for truly unsupported grades (not assessed by any model)
+      reason: isSupported
         ? null
-        : 'No validated Grade C/D detector is installed. Gemini can provide a non-counting visual advisory only.',
+        : (geminiAdvisoryUsed
+            ? 'Grade C/D assessed via Gemini visual advisory (image-level presence only, no per-nut counts).'
+            : 'No validated Grade C/D detector is installed. No count was invented.'),
     };
-    visibleCounts[letter] = supported ? Number(rawCounts[letter]) || 0 : null;
+    visibleCounts[letter] = hasCount ? Number(rawCounts[letter]) || 0 : null;
   });
+
+  // Calculate majority grade from validated detection counts
+  const majorityGradeInfo = calculateMajorityGrade(visibleCounts, policy);
+  result.majorityGrade = majorityGradeInfo.majorityGrade;
+  result.majorityGradeCount = majorityGradeInfo.majorityGradeCount;
+  result.majorityGradePercentage = majorityGradeInfo.majorityGradePercentage;
+  result.majorityGradeDetails = majorityGradeInfo.majorityGradeDetails;
 
   const visibleDetections = hadDetections
     ? result.detections.filter((detection) => {
@@ -766,32 +863,62 @@ function applyScanPolicy(scan, settings) {
   if (hadDetections) result.detections = visibleDetections;
   else delete result.detections;
 
-  const finalLetterMatch = String(result.finalGrade || '').match(/grade\s*([abcd])/i);
-  const finalLetter = finalLetterMatch ? finalLetterMatch[1].toUpperCase() : null;
-  const advisorySource = result.finalGradeSource === 'gemini_advisory';
-  if (
-    finalLetter &&
-    policy.enabledLetters.includes(finalLetter) &&
-    (rawSupported.includes(finalLetter) ||
-      (advisorySource && ['C', 'D'].includes(finalLetter)))
-  ) {
-    result.grade = result.finalGrade;
-    result.finalGradeSource = advisorySource ? 'gemini_advisory' : 'model';
-    if (advisorySource) {
-      result.finalGradeLabel = 'Gemini visual advisory (not a validated detector)';
+  // Fallback: compute confidence and qualityScore from detections if not provided by ML service
+  // This ensures Quality/Confidence display even when ML service doesn't return them
+  if ((result.confidence === null || result.confidence === undefined) && hadDetections && visibleDetections.length > 0) {
+    const validConfidences = visibleDetections
+      .map((d) => d.confidence_pct ?? (d.confidence !== undefined ? d.confidence * 100 : null))
+      .filter((v) => v !== null && v !== undefined && !isNaN(v));
+    if (validConfidences.length > 0) {
+      result.confidence = Math.round(validConfidences.reduce((a, b) => a + b, 0) / validConfidences.length);
+      result.confidenceMethod = result.confidenceMethod || 'computed_from_detections';
     }
-  } else if (finalLetter) {
-    result.finalGrade = null;
-    result.grade = null;
-    result.finalGradeSource = 'hidden_by_policy';
+  }
+  if ((result.qualityScore === null || result.qualityScore === undefined) && hadDetections && visibleDetections.length > 0) {
+    // Simple heuristic: quality score based on average detection confidence and count consistency
+    const confidences = visibleDetections
+      .map((d) => d.confidence_pct ?? (d.confidence !== undefined ? d.confidence * 100 : null))
+      .filter((v) => v !== null && v !== undefined && !isNaN(v));
+    if (confidences.length > 0) {
+      const avgConfidence = confidences.reduce((a, b) => a + b, 0) / confidences.length;
+      // Quality score considers confidence and detection count (more nuts = more reliable)
+      const countFactor = Math.min(1, visibleDetections.length / 50); // Saturates at 50 nuts
+      result.qualityScore = Math.round(avgConfidence * 0.7 + countFactor * 30);
+      result.qualityMethod = result.qualityMethod || 'computed_from_detections';
+    }
+  }
+
+  // Use the calculated majority grade as the final grade (single source of truth)
+  // Both Final Grade and Majority Grade are determined by highest valid detection count
+  const calculatedGrade = majorityGradeInfo.majorityGrade;
+  const isJointMajority = majorityGradeInfo.majorityGradeDetails?.tied === true;
+  
+  if (calculatedGrade && calculatedGrade !== 'Not Available') {
+    // For joint majority, we use the joint format for both fields
+    // For single majority, use the single grade
+    result.finalGrade = calculatedGrade;
+    result.grade = calculatedGrade;
+    
+    // Determine the source of the grade calculation
+    if (isJointMajority) {
+      result.finalGradeSource = 'count_based_joint';
+      result.finalGradeLabel = 'Calculated from detection counts (joint majority)';
+    } else {
+      result.finalGradeSource = 'count_based';
+      result.finalGradeLabel = 'Calculated from highest detection count';
+    }
+    // Preserve model's confidence and quality score (they reflect detection quality)
+    // even though the grade is now calculated from counts
+  } else {
+    // No valid detections - both grades are Not Available
+    result.finalGrade = 'Not Available';
+    result.grade = 'Not Available';
+    result.finalGradeSource = 'no_detections';
+    result.finalGradeLabel = 'No valid nuts detected in the image';
     result.confidence = null;
     result.qualityScore = null;
     result.qualityMethod = null;
     result.confidenceMethod = null;
-  } else {
-    // "Invalid" means no boxes/decision. It is not a hidden grade.
-    result.grade = result.finalGrade;
-    result.finalGradeSource = 'model';
   }
 
   if (Array.isArray(result.warnings)) {
@@ -847,7 +974,7 @@ function applyScanPolicy(scan, settings) {
         ],
         hiddenReason: 'The advisory mentioned a grade hidden by the display policy.',
         note:
-          'Gemini is never used as an object detector or to create Grade C/D nut counts.',
+          'This analysis is never used as an object detector or to create Grade C/D nut counts.',
       };
     } else {
       const hiddenGradePatterns = ['A', 'B', 'C', 'D']

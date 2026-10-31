@@ -9,7 +9,9 @@ const DATA_GOV_IN_SOURCE_URL =
 const PUBLIC_SOURCE_URL = 'https://agmarknet.gov.in/';
 const PUBLIC_SOURCE_LABEL = 'AGMARKNET 2.0 public dashboard';
 const DATA_GOV_IN_SOURCE_LABEL = 'AGMARKNET (data.gov.in)';
-const MARKET_SOURCES = ['agmarknet_public', 'data_gov_in'];
+const MANDI_API_BASE_URL = 'https://mandi-api.onrender.com/v1';
+const MANDI_API_LABEL = 'Mandi Price API (data.gov.in)';
+const MARKET_SOURCES = ['agmarknet_public', 'mandi_api', 'data_gov_in'];
 const AGMARKNET_HEADERS = {
   Accept: 'application/json',
   Origin: 'https://agmarknet.gov.in',
@@ -65,6 +67,13 @@ function sourceMeta(source) {
       licence: 'Government Open Data License - India',
     };
   }
+  if (source === 'mandi_api') {
+    return {
+      label: MANDI_API_LABEL,
+      url: 'https://mandi-api.vercel.app/',
+      licence: 'Government Open Data License - India',
+    };
+  }
   return {
     label: PUBLIC_SOURCE_LABEL,
     url: PUBLIC_SOURCE_URL,
@@ -73,7 +82,7 @@ function sourceMeta(source) {
 }
 
 function normalizeCacheSource(source) {
-  return source === 'agmarknet' || source === 'data_gov_in'
+  return source === 'agmarknet' || source === 'data_gov_in' || source === 'mandi_api'
     ? 'data_gov_in'
     : 'agmarknet_public';
 }
@@ -638,34 +647,159 @@ async function fetchFromDataGovIn(query) {
   }
 }
 
+async function fetchFromMandiApi(query) {
+  const state = query.state;
+  const commodity = query.commodity;
+  
+  if (!state || !commodity) {
+    throw new MarketPriceError(
+      'Mandi API requires both state and commodity parameters.',
+      { code: 'missing_params', statusCode: 400 }
+    );
+  }
+
+  const params = new URLSearchParams();
+  params.set('state', state);
+  params.set('commodity', commodity);
+  
+  // Optional parameters
+  if (query.district) params.set('district', query.district);
+  if (query.market) params.set('market', query.market);
+
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(),
+    Math.max(Number(config.marketTimeoutMs) || 20000, 2000)
+  );
+  
+  try {
+    const response = await fetch(`${MANDI_API_BASE_URL}/prices?${params.toString()}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new MarketPriceError(
+        `The Mandi API request failed with HTTP ${response.status}.`,
+        { code: 'upstream_error', statusCode: 502 }
+      );
+    }
+    let payload;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      throw new MarketPriceError('The Mandi API returned invalid JSON.', {
+        code: 'invalid_response',
+        statusCode: 502,
+      });
+    }
+    
+    if (!payload.success) {
+      throw new MarketPriceError(
+        `The Mandi API returned an error: ${payload.error?.message || 'Unknown error'}`,
+        { code: 'upstream_error', statusCode: 502 }
+      );
+    }
+    
+    const records = Array.isArray(payload.data) ? payload.data : [];
+    const normalized = records.map(normalizeMandiApiRecord).filter((record) => record.commodity);
+    
+    if (!normalized.length) {
+      const place = [query.market, query.district, query.state]
+        .filter(Boolean)
+        .join(', ');
+      throw new MarketPriceError(
+        `The Mandi API has no ${query.commodity} quote published for ${
+          place || 'the configured filters'
+        }. No price is invented.`,
+        { code: 'no_records', statusCode: 404 }
+      );
+    }
+    
+    return {
+      records: normalized,
+      total: normalized.length,
+      count: normalized.length,
+      source: 'mandi_api',
+      sourceUrl: MANDI_API_BASE_URL,
+      date: payload.meta?.date || new Date().toISOString().split('T')[0],
+    };
+  } catch (error) {
+    if (error instanceof MarketPriceError) throw error;
+    if (error && error.name === 'AbortError') {
+      throw new MarketPriceError(
+        `The Mandi API request timed out after ${config.marketTimeoutMs} ms.`,
+        { code: 'timeout', statusCode: 504 }
+      );
+    }
+    throw new MarketPriceError(
+      `The Mandi API request failed: ${redactKey(error.message || error).slice(0, 240)}`,
+      { code: 'network_error', statusCode: 503 }
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeMandiApiRecord(record) {
+  return {
+    state: String(record.state || '').trim(),
+    district: String(record.district || '').trim(),
+    market: String(record.market || '').trim(),
+    commodity: String(record.commodity || '').trim(),
+    variety: String(record.variety || '').trim(),
+    marketGrade: String(record.grade || '').trim(),
+    arrivalDate: String(record.arrival_date || record.date || '').trim(),
+    minPricePerQuintal: numeric(record.min_price),
+    maxPricePerQuintal: numeric(record.max_price),
+    modalPricePerQuintal: numeric(record.modal_price),
+    weightedAveragePricePerQuintal: numeric(record.modal_price), // API returns modal price
+    arrivalMetricTonnes: numeric(record.arrival),
+  };
+}
+
 async function fetchMarket(query, options = {}) {
   const source = marketSource();
   if (source === 'data_gov_in') {
     return fetchFromDataGovIn(query);
   }
+  if (source === 'mandi_api') {
+    return fetchFromMandiApi(query);
+  }
 
   try {
     return await fetchFromPublicAgmarknet(query, options);
   } catch (error) {
-    if (!hasMarketKey()) throw error;
+    // First fallback: try Mandi API (keyless, covers 5 states including Karnataka)
     try {
-      const fallback = await fetchFromDataGovIn(query);
+      const fallback = await fetchFromMandiApi(query);
       return {
         ...fallback,
-        source: 'data_gov_in',
+        source: 'mandi_api',
         fallbackFrom: 'agmarknet_public',
         fallbackReason: error.message,
       };
-    } catch (fallbackError) {
-      throw new MarketPriceError(
-        `${error.message} The optional data.gov.in fallback also failed: ${
-          fallbackError.message
-        }`,
-        {
-          code: error.code || 'market_unavailable',
-          statusCode: error.statusCode || 503,
-        }
-      );
+    } catch (mandiError) {
+      // Second fallback: try data.gov.in (requires API key)
+      if (!hasMarketKey()) throw mandiError;
+      try {
+        const fallback = await fetchFromDataGovIn(query);
+        return {
+          ...fallback,
+          source: 'data_gov_in',
+          fallbackFrom: 'agmarknet_public',
+          fallbackReason: `${error.message} Mandi API fallback also failed: ${mandiError.message}`,
+        };
+      } catch (fallbackError) {
+        throw new MarketPriceError(
+          `${error.message} Mandi API fallback failed: ${mandiError.message}. The optional data.gov.in fallback also failed: ${fallbackError.message}`,
+          {
+            code: error.code || 'market_unavailable',
+            statusCode: error.statusCode || 503,
+          }
+        );
+      }
     }
   }
 }

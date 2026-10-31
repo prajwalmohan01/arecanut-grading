@@ -123,10 +123,13 @@ test('disabled grades are filtered from counts, detections, final grade, confide
   assert.equal(visible.gradeA, 3);
   assert.equal('gradeB' in visible, false);
   assert.equal(visible.totalCount, 3);
-  assert.equal(visible.finalGrade, null);
-  assert.equal(visible.finalGradeSource, 'hidden_by_policy');
-  assert.equal(visible.confidence, null);
-  assert.equal(visible.qualityScore, null);
+  // With new logic: final grade = majority grade = highest count among enabled grades
+  // Grade A is enabled with 3 counts, Grade B is disabled -> final grade = Grade A
+  assert.equal(visible.finalGrade, 'Grade A');
+  assert.equal(visible.finalGradeSource, 'count_based');
+  // Confidence/quality still available from model's A/B detections
+  assert.ok(visible.confidence !== null);
+  assert.ok(visible.qualityScore !== null);
   assert.equal(visible.detections.length, 3);
   assert.ok(visible.detections.every((item) => item.grade === 'GradeA'));
   assert.equal(visible.annotatedImageAllowed, false);
@@ -170,8 +173,10 @@ test('C/D-only policy exposes no model count or confidence and keeps C/D counts 
   assert.equal(visible.qualityScore, null);
   assert.deepEqual(visible.supportedGrades, []);
   assert.deepEqual(visible.unavailableGrades, ['C', 'D']);
-  assert.equal(visible.finalGrade, 'Grade C');
-  assert.equal(visible.finalGradeSource, 'gemini_advisory');
+  // With new logic: no validated counts for C/D (only Gemini advisory)
+  // Majority/Final grade = Not Available since no actual detection counts
+  assert.equal(visible.finalGrade, 'Not Available');
+  assert.equal(visible.finalGradeSource, 'no_detections');
   assert.equal(visible.geminiAdvisory.gradeHint, 'Grade C');
   assert.equal(visible.annotatedImageAllowed, false);
 });
@@ -262,8 +267,9 @@ test('Gemini advisory text is suppressed when its hinted grade is disabled', () 
     settings
   );
 
-  assert.equal(visible.finalGrade, null);
-  assert.equal(visible.finalGradeSource, 'hidden_by_policy');
+  // With new logic: only Grade D enabled but no counts -> final grade = Not Available
+  assert.equal(visible.finalGrade, 'Not Available');
+  assert.equal(visible.finalGradeSource, 'no_detections');
   assert.equal(visible.geminiAdvisory.gradeHint, null);
   assert.deepEqual(visible.geminiAdvisory.evidence, []);
   assert.match(visible.geminiAdvisory.hiddenReason, /hidden by the display policy/);

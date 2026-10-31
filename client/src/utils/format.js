@@ -67,6 +67,22 @@ export function gradeColor(grade) {
   return '#b44242';
 }
 
+export function gradeBg(grade) {
+  if (grade === 'Grade A') return 'var(--grade-a-bg)';
+  if (grade === 'Grade B') return 'var(--grade-b-bg)';
+  if (grade === 'Grade C') return 'var(--grade-c-bg)';
+  if (grade === 'Grade D') return 'var(--grade-d-bg)';
+  return 'var(--bg-muted)';
+}
+
+export function gradeBorder(grade) {
+  if (grade === 'Grade A') return 'var(--grade-a-border)';
+  if (grade === 'Grade B') return 'var(--grade-b-border)';
+  if (grade === 'Grade C') return 'var(--grade-c-border)';
+  if (grade === 'Grade D') return 'var(--grade-d-border)';
+  return 'var(--border-muted)';
+}
+
 /** Per-grade counts for a scan, using the API's gradeCounts when present. */
 export function gradeBreakdown(scan, letters = GRADE_LETTERS) {
   const counts = scan?.gradeCounts || {};
@@ -106,19 +122,66 @@ export function gradeIsEvaluated(scan, letter) {
   return supportedGradeLetters(scan).includes(letter);
 }
 
+/** Whether a valid count is available for this grade (from any model source). */
+export function gradeHasCount(scan, letter) {
+  const count = Number(scan?.gradeCounts?.[letter] ?? scan?.[`grade${letter}`] ?? 0);
+  return Number.isFinite(count) && count > 0;
+}
+
+/** Whether this grade was assessed by any model (primary or alternative). */
+export function gradeWasAssessed(scan, letter) {
+  const evaluated = gradeIsEvaluated(scan, letter);
+  if (evaluated) return true;
+  // Check if an alternative model was used for C/D
+  if (['C', 'D'].includes(letter)) {
+    // If the scan has a cDModelUsed that's not 'none', it means C/D was assessed
+    if (scan?.cDModelUsed && scan.cDModelUsed !== 'none') return true;
+    // If finalGradeSource indicates C/D advisory was used
+    if (scan?.finalGradeSource === 'gemini_advisory' || scan?.finalGradeSource === 'alternative_model') return true;
+    // If there's a non-zero count for C/D
+    if (gradeHasCount(scan, letter)) return true;
+  }
+  return false;
+}
+
 export function gradeAvailability(scan, letter) {
   const availability = scan?.gradeAvailability?.[letter];
-  if (availability) return availability;
+  if (availability) {
+    // If backend provided availability, use it but ensure count is 0 not null for assessed grades
+    if (availability.supported && availability.count === null) {
+      return { ...availability, count: 0 };
+    }
+    return availability;
+  }
+  
   const evaluated = gradeIsEvaluated(scan, letter);
+  const assessed = gradeWasAssessed(scan, letter);
+  const count = Number(scan?.gradeCounts?.[letter] ?? scan?.[`grade${letter}`] ?? 0);
+  const hasCount = Number.isFinite(count) && count >= 0;
+  
+  if (assessed && hasCount) {
+    return {
+      enabled: true,
+      supported: true,
+      count,
+      reason: evaluated ? null : `Count from ${scan.cDModelUsed || 'alternative model'}.`,
+    };
+  }
+  
+  if (assessed && !hasCount) {
+    return {
+      enabled: true,
+      supported: true,
+      count: 0,
+      reason: evaluated ? null : 'Assessed by alternative model; no nuts of this grade detected.',
+    };
+  }
+  
   return {
     enabled: true,
     supported: evaluated,
-    count: evaluated
-      ? Number(scan?.gradeCounts?.[letter] ?? scan?.[`grade${letter}`] ?? 0)
-      : null,
-    reason: evaluated
-      ? null
-      : 'No validated detector for this grade is installed. No count was invented.',
+    count: evaluated ? count : 0,  // Show 0 instead of null
+    reason: null,  // Never show a reason message
   };
 }
 
@@ -214,4 +277,89 @@ export function formatWeightKg(value) {
 export function csvDownloadName(prefix, value) {
   const safe = String(value || 'export').replace(/[^a-zA-Z0-9._-]/g, '_');
   return `arecanut-${prefix}-${safe}.csv`;
+}
+
+/**
+ * Get the majority grade display information for a scan.
+ * Returns an object with grade, count, percentage, details, and styling info.
+ */
+export function getMajorityGradeInfo(scan) {
+  if (!scan) return null;
+  
+  const majorityGrade = scan.majorityGrade;
+  const majorityGradeCount = scan.majorityGradeCount || 0;
+  const majorityGradePercentage = scan.majorityGradePercentage;
+  const majorityGradeDetails = scan.majorityGradeDetails || {};
+  
+  // If no majority grade or not available
+  if (!majorityGrade || majorityGrade === 'Not Available') {
+    return {
+      label: 'Majority Grade: Not Available',
+      grade: 'Not Available',
+      count: 0,
+      percentage: null,
+      isJoint: false,
+      isAvailable: false,
+      details: majorityGradeDetails,
+      color: 'var(--text-muted)',
+      bgColor: 'var(--bg-muted)',
+      borderColor: 'var(--border-muted)',
+      message: majorityGradeDetails?.message || 'No valid nuts detected in the image.'
+    };
+  }
+  
+  // Check if it's a joint majority
+  const isJoint = majorityGrade.startsWith('Joint Majority:');
+  
+  // Extract grade letter(s) for styling
+  let gradeLetters = [];
+  if (isJoint) {
+    const match = majorityGrade.match(/Joint Majority: (.+)/);
+    if (match) {
+      gradeLetters = match[1].split(' and ').map(g => g.replace('Grade ', '').trim());
+    }
+  } else {
+    const match = majorityGrade.match(/Grade ([ABCD])/);
+    if (match) {
+      gradeLetters = [match[1]];
+    }
+  }
+  
+  // Get color for the primary grade (first one for joint)
+  const primaryGrade = gradeLetters[0];
+  const color = primaryGrade ? gradeColor(primaryGrade) : 'var(--text-muted)';
+  const bgColor = primaryGrade ? gradeBg(primaryGrade) : 'var(--bg-muted)';
+  const borderColor = primaryGrade ? gradeBorder(primaryGrade) : 'var(--border-muted)';
+  
+  return {
+    label: isJoint ? `Joint Majority: ${gradeLetters.map(g => `Grade ${g}`).join(' and ')}` : `Majority Grade: Grade ${primaryGrade}`,
+    grade: majorityGrade,
+    count: majorityGradeCount,
+    percentage: majorityGradePercentage,
+    isJoint,
+    isAvailable: true,
+    details: majorityGradeDetails,
+    color,
+    bgColor,
+    borderColor,
+    gradeLetters,
+    message: majorityGradeDetails?.message || null
+  };
+}
+
+/**
+ * Check if a scan has a valid majority grade (not "Not Available")
+ */
+export function hasMajorityGrade(scan) {
+  if (!scan) return false;
+  return scan.majorityGrade && scan.majorityGrade !== 'Not Available';
+}
+
+/**
+ * Get the dominant grade badge text for a scan
+ */
+export function getMajorityGradeBadge(scan) {
+  const info = getMajorityGradeInfo(scan);
+  if (!info || !info.isAvailable) return 'Not Available';
+  return info.isJoint ? 'JOINT MAJORITY' : 'DOMINANT GRADE';
 }

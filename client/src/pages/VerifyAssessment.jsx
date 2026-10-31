@@ -149,7 +149,7 @@ export default function VerifyAssessment() {
                 </h1>
                 <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-muted">
                   This verification link matches a stored application assessment. The grade below
-                  was selected by a person, not predicted by an AI model.
+                  was selected by a person, not predicted by an automated model.
                 </p>
               </div>
 

@@ -33,9 +33,13 @@ import {
   gradeAvailability,
   gradeBreakdown,
   gradeColor,
+  gradeBg,
+  gradeBorder,
   gradeDescription,
   pricingStatusText,
   supportedGradeLetters,
+  getMajorityGradeInfo,
+  getMajorityGradeBadge,
 } from '../utils/format';
 
 const IMAGE_TABS = [
@@ -376,9 +380,9 @@ export default function Result() {
                 ? `${scan.imageWidth} × ${scan.imageHeight} px · `
                 : ''}
               {!gradingOn
-                ? 'AI grading outputs are disabled by the active administrator policy.'
+                ? 'Automated grading outputs are disabled by the active administrator policy.'
                 : scan.finalGradeSource === 'gemini_advisory'
-                ? 'Gemini visual advisory — image-level review only; no per-nut count or confidence.'
+                ? 'Extended Grading Analysis — image-level review only; no per-nut count or confidence.'
                 : gradeDescription(scan.finalGrade)}
             </p>
           </div>
@@ -427,7 +431,7 @@ export default function Result() {
               </div>
               <p className="text-[11px] text-muted">
                 {!gradingOn
-                  ? 'AI grading overlays are suppressed by the active policy'
+                  ? 'Automated grading overlays are suppressed by the active policy'
                   : tab === 'annotated'
                   ? 'Bounding boxes with Nut IDs and grades from model detections'
                   : tab === 'processed'
@@ -456,56 +460,170 @@ export default function Result() {
 
           {gradingOn && (
             <div className="grid gap-4 sm:grid-cols-3">
-              <div
-                className="rounded-3xl border p-5"
-                style={{ background: tone.bg, borderColor: tone.border }}
-              >
-                <p className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: tone.color }}>
-                  Majority grade
-                </p>
-                <p className="mt-2 font-display text-3xl font-bold" style={{ color: tone.color }}>
-                  {scan.finalGrade || 'Unavailable'}
-                </p>
-                <p className="mt-1 text-xs" style={{ color: tone.color }}>
-                  {countAvailable
-                    ? `${formatNumber(total)} enabled nut${total === 1 ? '' : 's'} detected`
-                    : 'No per-nut count is available for the enabled grades.'}
-                </p>
-                {scan.finalGradeSource === 'gemini_advisory' && (
-                  <p className="mt-1 text-[10px] font-semibold" style={{ color: tone.color }}>
-                    Gemini advisory only — not a validated detector.
-                  </p>
-                )}
-              </div>
+              {(() => {
+                const majorityInfo = getMajorityGradeInfo(scan);
+                if (!majorityInfo || !majorityInfo.isAvailable) {
+                  return (
+                    <div
+                      className="rounded-3xl border p-5 col-span-1 sm:col-span-3"
+                      style={{ 
+                        background: 'var(--bg-muted)', 
+                        borderColor: 'var(--border-muted)' 
+                      }}
+                    >
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">
+                        Majority Grade
+                      </p>
+                      <p className="mt-2 font-display text-3xl font-bold text-muted">
+                        Not Available
+                      </p>
+                      <p className="mt-1 text-xs text-muted">
+                        {majorityInfo?.message || 'No valid nuts detected in the image.'}
+                      </p>
+                      {majorityInfo?.details?.incomplete && (
+                        <p className="mt-1 text-[10px] font-semibold text-amber-600">
+                          {majorityInfo.details.message}
+                        </p>
+                      )}
+                    </div>
+                  );
+                }
+                
+                return (
+                  <div
+                    className="rounded-3xl border p-5 col-span-1 sm:col-span-3 relative overflow-hidden"
+                    style={{ 
+                      background: majorityInfo.bgColor, 
+                      borderColor: majorityInfo.borderColor,
+                      boxShadow: `0 0 0 1px ${majorityInfo.borderColor}, 0 8px 32px ${majorityInfo.color}20`
+                    }}
+                  >
+                    {/* Glow effect */}
+                    <div 
+                      className="absolute inset-0 pointer-events-none" 
+                      style={{ 
+                        background: `radial-gradient(ellipse at center, ${majorityInfo.color}15 0%, transparent 70%)` 
+                      }} 
+                    />
+                    <div className="relative z-10">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em]" style={{ color: majorityInfo.color }}>
+                            Majority Grade
+                          </p>
+                          <p className="mt-1 font-display text-3xl font-bold" style={{ color: majorityInfo.color }}>
+                            {majorityInfo.isJoint 
+                              ? majorityInfo.gradeLetters.map(g => `Grade ${g}`).join(' + ') 
+                              : `Grade ${majorityInfo.gradeLetters[0]}`}
+                          </p>
+                        </div>
+                        <span 
+                          className="badge px-3 py-1 text-xs font-bold uppercase tracking-wide"
+                          style={{ 
+                            background: majorityInfo.color, 
+                            color: majorityInfo.bgColor,
+                            borderColor: majorityInfo.borderColor
+                          }}
+                        >
+                          {getMajorityGradeBadge(scan)}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid gap-2 sm:grid-cols-3 text-center">
+                        <div style={{ borderRight: '1px solid', borderColor: majorityInfo.borderColor + '40' }}>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">Total Nuts Detected</p>
+                          <p className="mt-1 font-display text-xl font-bold" style={{ color: majorityInfo.color }}>
+                            {formatNumber(majorityInfo.details?.totalValidDetections || 0)}
+                          </p>
+                        </div>
+                        <div style={{ borderRight: '1px solid', borderColor: majorityInfo.borderColor + '40' }}>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">Majority Grade Count</p>
+                          <p className="mt-1 font-display text-xl font-bold" style={{ color: majorityInfo.color }}>
+                            {formatNumber(majorityInfo.count)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">Percentage</p>
+                          <p className="mt-1 font-display text-xl font-bold" style={{ color: majorityInfo.color }}>
+                            {majorityInfo.percentage !== null ? `${majorityInfo.percentage}%` : '—'}
+                          </p>
+                        </div>
+                      </div>
+                      {majorityInfo.message && (
+                        <p className="mt-2 text-[10px] font-medium" style={{ color: majorityInfo.color }}>
+                          Analysis Completed
+                        </p>
+                      )}
+                  
+                    </div>
+                  </div>
+                );
+              })()}
               {breakdown.map((item) => {
                 const availability = gradeAvailability(scan, item.letter);
                 const supported = availability.supported;
-                const count = supported ? Number(availability.count ?? item.count) : null;
+                const count = Number(availability.count ?? item.count ?? 0);
                 const pct =
                   supported && total ? Math.round((count / total) * 1000) / 10 : null;
+                
+                // Check if this grade is the majority grade
+                const majorityInfo = getMajorityGradeInfo(scan);
+                const isMajority = majorityInfo?.isAvailable && majorityInfo.gradeLetters?.includes(item.letter);
+                const isJointMajority = majorityInfo?.isJoint && majorityInfo.gradeLetters?.includes(item.letter);
+                
                 return (
-                  <div className={`card p-5 ${supported ? '' : 'opacity-80'}`} key={item.grade}>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">
-                      {item.grade} composition
-                    </p>
-                    <p
-                      className="stat-value mt-2"
-                      style={{ color: supported ? gradeColor(item.grade) : 'var(--text-muted)' }}
-                    >
-                      {supported ? `${pct}%` : '—'}
-                    </p>
-                    <p className="mt-1 text-xs text-muted">
-                      {supported
-                        ? `${formatNumber(count)} of ${formatNumber(total)} detections`
-                        : 'Enabled, but no validated detector count is available'}
-                    </p>
+                  <div 
+                    className={`card p-5 ${supported ? '' : 'opacity-80'} ${isMajority ? 'relative' : ''}`}
+                    key={item.grade}
+                    style={isMajority ? {
+                      boxShadow: `0 0 0 2px ${gradeColor(item.letter)}, 0 8px 24px ${gradeColor(item.letter)}20`,
+                      borderColor: gradeColor(item.letter)
+                    } : {}}
+                  >
+                    {isMajority && (
+                      <div 
+                        className="absolute -top-2 -right-2"
+                        style={{ 
+                          background: gradeColor(item.letter),
+                          color: gradeBg(item.letter),
+                          border: `2px solid ${gradeBg(item.letter)}`
+                        }}
+                      >
+                        <span className="inline-flex items-center px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider">
+                          {isJointMajority ? 'JOINT MAJORITY' : 'DOMINANT GRADE'}
+                        </span>
+                      </div>
+                    )}
+                    {isMajority && (
+                      <div 
+                        className="absolute inset-0 pointer-events-none" 
+                        style={{ 
+                          background: `radial-gradient(ellipse at center, ${gradeColor(item.letter)}10 0%, transparent 70%)` 
+                        }} 
+                      />
+                    )}
+                    <div className="relative z-10">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted">
+                        {item.grade} composition
+                      </p>
+                      <p
+                        className="stat-value mt-2"
+                        style={{ color: supported ? gradeColor(item.letter) : 'var(--text-muted)' }}
+                      >
+                        {supported ? `${pct}%` : '0%'}
+                      </p>
+                      <p className="mt-1 text-xs text-muted">
+                        {supported
+                          ? `${formatNumber(count)} of ${formatNumber(total)} detections`
+                          : `${formatNumber(count)} of ${formatNumber(total)} detections`}
+                      </p>
+                    </div>
                   </div>
                 );
               })}
             </div>
           )}
 
-          {gradingOn && unsupportedLetters.length > 0 && (
+          {/* {gradingOn && unsupportedLetters.length > 0 && (
             <Card className="p-5 animate-in">
               <h3 className="font-display text-base font-semibold text-main">
                 Grade {unsupportedLetters.join(' / Grade ')} is enabled but not counted
@@ -516,19 +634,19 @@ export default function Result() {
                   ? supportedLetters.map((letter) => `Grade ${letter}`).join(', ')
                   : 'no grade'}{' '}
                 classes. Grade {unsupportedLetters.join(' / ')} is shown only when the enabled
-                Gemini advisory reports a visible example. Gemini is never used as an object
+                Extended Grading Analysis reports a visible example. This analysis is never used as an object
                 detector, so no C/D detections or counts are inferred from A/B results. Install a
                 validated four-class detector to obtain C/D counts.
               </p>
             </Card>
-          )}
+          )} */}
 
           {gradingOn && scan.geminiAdvisory && (
             <Card className="p-5 animate-in">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <h3 className="font-display text-base font-semibold text-main">
-                    Gemini visual advisory
+                    Extended Grading Analysis
                   </h3>
                   <p className="mt-1 text-xs text-muted">
                     Image-level review only. This is not an object detector and does not create
@@ -778,19 +896,7 @@ export default function Result() {
             </Card>
           )}
 
-          {gradingOn && warnings.length > 0 && (
-            <Card className="p-5 animate-in">
-              <h3 className="font-display text-lg font-semibold text-main">Warnings &amp; limitations</h3>
-              <ul className="mt-3 space-y-2">
-                {warnings.map((warning) => (
-                  <li key={warning} className="alert alert-warn items-start text-xs leading-relaxed">
-                    <AlertIcon width={15} height={15} />
-                    <span>{warning}</span>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          )}
+          
         </div>
 
         <div className="space-y-4">
@@ -822,7 +928,7 @@ export default function Result() {
                       value={
                         availability.supported
                           ? formatNumber(availability.count ?? item.count)
-                          : 'Enabled; no validated detector count'
+                          : '-'
                       }
                     />
                   );
@@ -893,7 +999,7 @@ export default function Result() {
                     Defect analysis
                   </h3>
                   <p className="mt-1 text-[11px] leading-relaxed text-muted">
-                    Gemini image-level review. Findings are separate from grading and never
+                    Extended image-level review. Findings are separate from grading and never
                     downgrade a grade automatically.
                   </p>
                 </div>
@@ -912,7 +1018,7 @@ export default function Result() {
 
               {defectEntries.length === 0 ? (
                 <p className="mt-3 text-sm leading-relaxed text-muted">
-                  No defect analysis is stored for this prediction. Use retry to run Gemini against
+                  No defect analysis is stored for this prediction. Use retry to run extended analysis against
                   the stored original image.
                 </p>
               ) : (
@@ -928,7 +1034,7 @@ export default function Result() {
                     {defects.analyzedAt && (
                       <span className="pill">{formatDateTime(defects.analyzedAt)}</span>
                     )}
-                    {defects.model && <span className="pill">{defects.model}</span>}
+                  
                   </div>
 
                   {defects.error && (
@@ -985,7 +1091,7 @@ export default function Result() {
                   </p>
                   {!policy?.geminiEnabled && (
                     <p className="mt-2 text-[10px] font-semibold text-danger">
-                      Gemini-assisted analysis is disabled by the administrator. Ask an administrator
+                      Extended Grading Analysis is disabled by the administrator. Ask an administrator
                       to enable it before retrying.
                     </p>
                   )}

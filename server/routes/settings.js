@@ -5,7 +5,7 @@ const { protect } = require('../middleware/authMiddleware');
 const asyncHandler = require('../utils/asyncHandler');
 const { getSettings } = require('../services/settingsService');
 const { publicPolicy } = require('../services/presentationService');
-const { configuredKeyCount } = require('../services/geminiService');
+const { geminiStatus } = require('../services/geminiService');
 
 const router = express.Router();
 
@@ -31,15 +31,7 @@ router.get(
           unit: 'INR/quintal',
         },
       },
-      gemini: {
-        enabled: Boolean(settings.predictions.geminiEnabled),
-        configured: configuredKeyCount() > 0,
-        model: settings.gemini.model,
-        advisoryOnly: true,
-        imageLevelOnly: true,
-        localizationAvailable: false,
-        affectedNutCountsAvailable: false,
-      },
+      gemini: geminiStatus(settings),
     });
   })
 );

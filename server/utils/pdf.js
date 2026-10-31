@@ -248,7 +248,7 @@ function addDefects(doc, defects) {
   );
   if (!entries.length) return;
 
-  sectionTitle(doc, 'Defect analysis (Gemini image-level review)');
+  sectionTitle(doc, 'Defect Analysis (Image-Level Review)');
   keyValue(doc, 'Analysis status', defects.analysisStatus || 'unknown', {
     width: 500,
     color:
@@ -256,7 +256,7 @@ function addDefects(doc, defects) {
         ? COLORS.danger
         : COLORS.charcoal,
   });
-  keyValue(doc, 'Analysis method', 'Gemini vision, image-level', { width: 500 });
+  keyValue(doc, 'Analysis method', 'Automated Vision, Image-Level', { width: 500 });
   keyValue(doc, 'Model', safe(defects.model), { width: 500 });
   keyValue(doc, 'Analyzed at', formatDate(defects.analyzedAt), { width: 500 });
   if (defects.error) {
@@ -458,7 +458,7 @@ function addDetections(doc, detections) {
 
 function addGeminiAdvisory(doc, advisory) {
   if (!advisory || typeof advisory !== 'object') return;
-  sectionTitle(doc, 'Gemini visual advisory (non-detector)');
+  sectionTitle(doc, 'Extended Grading Analysis (Non-Detector)');
   keyValue(doc, 'Status', advisory.status || 'unknown', {
     width: 500,
     color: advisory.status === 'ok' ? COLORS.charcoal : COLORS.danger,
@@ -502,7 +502,7 @@ function addGeminiAdvisory(doc, advisory) {
       color: COLORS.gold,
     });
   }
-  keyValue(doc, 'Analysis method', 'Gemini vision, image-level', { width: 500 });
+  keyValue(doc, 'Analysis method', 'Automated Vision, Image-Level', { width: 500 });
   keyValue(doc, 'Model', advisory.model || 'Not available', { width: 500 });
   if (advisory.analyzedAt) {
     keyValue(doc, 'Analyzed at', formatDate(advisory.analyzedAt), { width: 500 });
@@ -668,7 +668,7 @@ function addPolicySummary(doc, scan) {
     { width: 500 }
   );
   if (policy.defectDetectionEnabled) {
-    keyValue(doc, 'Defect detection', 'On (Gemini image-level review)', {
+    keyValue(doc, 'Defect detection', 'On (Image-Level Review)', {
       width: 500,
     });
     keyValue(
@@ -835,6 +835,130 @@ async function buildPredictionReport(scan, images = {}, options = {}) {
 
   if (gradingEnabled) addGradeSupport(doc, scan);
 
+  // Majority Grade section
+  if (gradingEnabled && scan.majorityGrade && scan.majorityGrade !== 'Not Available') {
+    sectionTitle(doc, 'Majority Grade');
+    const majorityGradeColor = gradeColor(scan.majorityGrade.replace('Joint Majority: ', '').split(' and ')[0]);
+    const isJoint = scan.majorityGrade.startsWith('Joint Majority:');
+    const badgeText = isJoint ? 'JOINT MAJORITY' : 'DOMINANT GRADE';
+    const cardHeight = 85;
+    const cardY = doc.y;
+    
+    // Card background with grade color
+    doc
+      .roundedRect(48, cardY, doc.page.width - 96, cardHeight, 8)
+      .fill(majorityGradeColor + '15');
+    doc
+      .roundedRect(48, cardY, doc.page.width - 96, cardHeight, 8)
+      .strokeColor(majorityGradeColor)
+      .lineWidth(2)
+      .stroke();
+    
+    // Header: "Majority Grade" label and badge
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(8)
+      .fillColor(majorityGradeColor)
+      .text('MAJORITY GRADE', 60, cardY + 10);
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(7)
+      .fillColor('#FFFFFF')
+      .text(badgeText, doc.page.width - 160, cardY + 10, { width: 100, align: 'right' });
+    
+    // Grade name
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(20)
+      .fillColor(majorityGradeColor)
+      .text(scan.majorityGrade, 60, cardY + 28, { width: doc.page.width - 120 });
+    
+    // Grid with 3 columns
+    const gridY = cardY + 55;
+    const colWidth = (doc.page.width - 96) / 3;
+    const col1X = 48;
+    const col2X = 48 + colWidth;
+    const col3X = 48 + colWidth * 2;
+    
+    // Column separators
+    doc
+      .moveTo(col2X, gridY + 5)
+      .lineTo(col2X, gridY + 25)
+      .strokeColor(majorityGradeColor + '40')
+      .lineWidth(1)
+      .stroke();
+    doc
+      .moveTo(col3X, gridY + 5)
+      .lineTo(col3X, gridY + 25)
+      .strokeColor(majorityGradeColor + '40')
+      .lineWidth(1)
+      .stroke();
+    
+    // Total Nuts Detected
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(7)
+      .fillColor(COLORS.muted)
+      .text('TOTAL NUTS DETECTED', col1X + 12, gridY + 5, { width: colWidth - 24, align: 'center' });
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(12)
+      .fillColor(majorityGradeColor)
+      .text(String(safe(scan.majorityGradeDetails?.totalValidDetections || scan.totalCount, 0)), col1X + 12, gridY + 16, { width: colWidth - 24, align: 'center' });
+    
+    // Majority Grade Count
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(7)
+      .fillColor(COLORS.muted)
+      .text('MAJORITY GRADE COUNT', col2X + 12, gridY + 5, { width: colWidth - 24, align: 'center' });
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(12)
+      .fillColor(majorityGradeColor)
+      .text(String(safe(scan.majorityGradeCount, 0)), col2X + 12, gridY + 16, { width: colWidth - 24, align: 'center' });
+    
+    // Percentage
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(7)
+      .fillColor(COLORS.muted)
+      .text('PERCENTAGE', col3X + 12, gridY + 5, { width: colWidth - 24, align: 'center' });
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(12)
+      .fillColor(majorityGradeColor)
+      .text(scan.majorityGradePercentage !== null ? `${scan.majorityGradePercentage}%` : '—', col3X + 12, gridY + 16, { width: colWidth - 24, align: 'center' });
+    
+    doc.y = cardY + cardHeight + 8;
+    
+    // Message and incomplete warning
+    if (scan.majorityGradeDetails?.message) {
+      doc
+        .font('Helvetica-Oblique')
+        .fontSize(8)
+        .fillColor(COLORS.muted)
+        .text(scan.majorityGradeDetails.message, 48, doc.y, { width: doc.page.width - 96 });
+      doc.moveDown(0.3);
+    }
+    if (scan.majorityGradeDetails?.incomplete) {
+      doc
+        .font('Helvetica-Oblique')
+        .fontSize(8)
+        .fillColor(COLORS.gold)
+        .text(scan.majorityGradeDetails.message, 48, doc.y, { width: doc.page.width - 96 });
+      doc.moveDown(0.3);
+    }
+  } else if (gradingEnabled) {
+    sectionTitle(doc, 'Majority Grade');
+    doc
+      .font('Helvetica')
+      .fontSize(9)
+      .fillColor(COLORS.muted)
+      .text('Not Available — No valid nuts detected in the image.', 48, doc.y, { width: doc.page.width - 96 });
+    doc.moveDown(0.5);
+  }
+
   sectionTitle(doc, 'Evidence images');
   addImage(doc, prepared.original, 'Original image');
   if (gradingEnabled) {
@@ -890,7 +1014,6 @@ async function buildPredictionReport(scan, images = {}, options = {}) {
     addDetections(doc, scan.detections);
     addGeminiAdvisory(doc, scan.geminiAdvisory);
     addPricing(doc, scan.pricing);
-    addWarnings(doc, scan.warnings);
 
     sectionTitle(doc, 'Result summary');
     doc
@@ -899,7 +1022,7 @@ async function buildPredictionReport(scan, images = {}, options = {}) {
       .fillColor(COLORS.charcoal)
       .text(
         scan.finalGradeSource === 'gemini_advisory' && scan.finalGrade
-          ? `No validated Grade C/D detector is installed, so no C/D nut count or calibrated confidence is claimed. The labelled Gemini visual advisory reports a visible Grade ${String(
+          ? `No validated Grade C/D detector is installed, so no C/D nut count or calibrated confidence is claimed. The labelled Extended Grading Analysis reports a visible Grade ${String(
               scan.finalGrade
             ).replace(/^Grade\s*/i, '')} example. This is an image-level review, not a detector count.`
           : scan.totalCount > 0 && scan.finalGrade
@@ -917,8 +1040,6 @@ async function buildPredictionReport(scan, images = {}, options = {}) {
       );
     doc.moveDown(0.7);
   }
-
-  addPolicySummary(doc, scan);
 
   doc
     .font('Helvetica-Oblique')

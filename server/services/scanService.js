@@ -79,6 +79,14 @@ function serializeScan(scan, options = {}) {
       processed: imageUrl(doc, 'processed'),
       annotated: imageUrl(doc, 'annotated'),
     },
+    // Multi-model inference fields for Grade C/D
+    cDModelUsed: doc.cDModelUsed || 'none',
+    alternativeModelResult: doc.alternativeModelResult || null,
+    // Majority grade fields
+    majorityGrade: doc.majorityGrade || 'Not Available',
+    majorityGradeCount: doc.majorityGradeCount || 0,
+    majorityGradePercentage: doc.majorityGradePercentage ?? null,
+    majorityGradeDetails: doc.majorityGradeDetails || null,
   };
 }
 
