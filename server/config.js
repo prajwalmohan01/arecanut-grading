@@ -74,10 +74,10 @@ const config = {
   geminiTimeoutMs: Number(process.env.GEMINI_TIMEOUT_MS || 30000),
   geminiMaxRetries: Number(process.env.GEMINI_MAX_RETRIES || 2),
   geminiImageMaxDimension: Number(
-    process.env.GEMINI_IMAGE_MAX_DIMENSION || 1280
+    process.env.GEMINI_IMAGE_MAX_DIMENSION || 2048
   ),
   geminiCooldownMs: Number(process.env.GEMINI_COOLDOWN_MS || 60000),
-  geminiMaxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 900),
+  geminiMaxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 1600),
 
   // AGMARKNET daily mandi prices. The public AGMARKNET 2.0 dashboard is the
   // default keyless source. data.gov.in remains an optional fallback when a

@@ -227,8 +227,9 @@ def model_info() -> dict:
 def grade_letter(label: str):
     """Map a verified class label to a grade letter when unambiguous.
 
-    Only labels that explicitly contain a grade letter are mapped. Unknown labels
-    are returned as ``None`` instead of being guessed.
+    Supports ``GradeA``/``Grade A``/``grade-a``, standalone A-D classes,
+    and the documented ``Q1``-``Q4`` quality aliases (Q1=A .. Q4=D).
+    Unknown labels are returned as ``None`` instead of being guessed.
     """
     if not label:
         return None
@@ -238,6 +239,9 @@ def grade_letter(label: str):
     match = re.fullmatch(r"\s*([abcd])\s*", label, re.IGNORECASE)
     if match:
         return match.group(1).upper()
+    match = re.fullmatch(r"\s*q[\s_-]*([1-4])\s*", label, re.IGNORECASE)
+    if match:
+        return {"1": "A", "2": "B", "3": "C", "4": "D"}[match.group(1)]
     return None
 
 

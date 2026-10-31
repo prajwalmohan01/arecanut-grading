@@ -8,6 +8,10 @@ const {
   DEFECT_LABELS,
   buildGeminiDefectAnalysis,
 } = require('./defectService');
+const {
+  normaliseGradePresence,
+  visibleAdvisoryGrades,
+} = require('./advisoryService');
 
 const DEFAULT_COOLDOWN_MS = Math.max(Number(config.geminiCooldownMs) || 60000, 5000);
 const KEY_ENV_NAMES = [
@@ -173,9 +177,9 @@ const DEFECT_ITEM_SCHEMA = {
   properties: {
     status: {
       type: 'STRING',
-      enum: ['detected', 'not_detected', 'uncertain', 'error'],
+      enum: ['detected', 'not_detected', 'uncertain', 'unavailable'],
       description:
-        'detected = visibly present; not_detected = image usable and no visible evidence; uncertain = ambiguous or obscured; error = category could not be assessed.',
+        'detected = visibly present; not_detected = image usable and no visible evidence after a systematic inspection; uncertain = ambiguous or obscured; unavailable = this category could not be assessed from the image.',
     },
     explanation: {
       type: 'STRING',
@@ -192,6 +196,23 @@ const DEFECT_ITEM_SCHEMA = {
   required: ['status', 'explanation'],
 };
 
+const GRADE_PRESENCE_ITEM_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    visible: {
+      type: 'BOOLEAN',
+      description:
+        'True only when at least one nut in the image visibly matches this grade definition.',
+    },
+    evidence: {
+      type: 'STRING',
+      description:
+        'One short, concrete visual observation supporting the presence or absence of this grade. Do not give a count or location.',
+    },
+  },
+  required: ['visible', 'evidence'],
+};
+
 const BASE_RESPONSE_SCHEMA = {
   type: 'OBJECT',
   properties: {
@@ -199,6 +220,21 @@ const BASE_RESPONSE_SCHEMA = {
     gradeHint: {
       type: 'STRING',
       enum: ['Grade A', 'Grade B', 'Grade C', 'Grade D', 'unknown'],
+    },
+    gradePresence: {
+      type: 'OBJECT',
+      properties: {
+        A: GRADE_PRESENCE_ITEM_SCHEMA,
+        B: GRADE_PRESENCE_ITEM_SCHEMA,
+        C: GRADE_PRESENCE_ITEM_SCHEMA,
+        D: GRADE_PRESENCE_ITEM_SCHEMA,
+      },
+      required: ['A', 'B', 'C', 'D'],
+    },
+    reviewRecommendation: {
+      type: 'STRING',
+      description:
+        'A brief, practical next step when the image is ambiguous, or "No further visual review needed" when clear. Never recommend a laboratory conclusion this review cannot support.',
     },
     evidence: {
       type: 'ARRAY',
@@ -210,7 +246,15 @@ const BASE_RESPONSE_SCHEMA = {
     },
     containsMixedGrades: { type: 'BOOLEAN' },
   },
-  required: ['imageUsable', 'gradeHint', 'evidence', 'limitations', 'containsMixedGrades'],
+  required: [
+    'imageUsable',
+    'gradeHint',
+    'gradePresence',
+    'reviewRecommendation',
+    'evidence',
+    'limitations',
+    'containsMixedGrades',
+  ],
 };
 
 function buildResponseSchema(includeDefects = false) {
@@ -239,6 +283,10 @@ function buildPrompt(context = {}) {
   const supported = Array.isArray(context.supportedGrades)
     ? context.supportedGrades.join(', ')
     : 'A, B';
+  const enabled =
+    Array.isArray(context.enabledGrades) && context.enabledGrades.length
+      ? context.enabledGrades.join(', ')
+      : 'not supplied';
   const counts =
     context.counts && typeof context.counts === 'object'
       ? JSON.stringify(context.counts)
@@ -256,7 +304,8 @@ function buildPrompt(context = {}) {
     'This is an image-level review. You are not an object detector or a segmentation model.',
     'Do NOT estimate or invent nut counts, bounding boxes, affected-nut counts, or numerical confidence.',
     'Do NOT claim calibration, laboratory testing, or a validated grading accuracy.',
-    'The existing detector supports these grades: ' + supported + '.',
+    'The bundled detector supports these grades: ' + supported + '.',
+    'Grades enabled for display by the administrator: ' + enabled + '.',
     'Existing detector counts: ' + counts + '.',
     '',
     'Grade definitions for the visual convention used by this app:',
@@ -264,12 +313,15 @@ function buildPrompt(context = {}) {
     'Grade B = good appearance, minor variation or minor surface defects.',
     'Grade C = fair appearance, noticeable defects, discolouration, or unevenness.',
     'Grade D = poor appearance, substantial defects, damage, or severe unevenness.',
-    'Use "unknown" when the image is not usable or the evidence is insufficient.',
+    'Use "unknown" for gradeHint when the image is not usable or the evidence is insufficient.',
     '',
     'Rules:',
-    '- Judge only what is visibly supported in the image.',
-    '- Use short evidence items; do not guess hidden or off-frame nuts.',
-    '- If the image contains mixed quality, set containsMixedGrades=true and still return one overall image-level hint.',
+    '- Judge only what is visibly supported in the image. Inspect the whole frame, including edges and partially obscured nuts.',
+    '- Review all four grade definitions in gradePresence, even when the bundled detector supports fewer grades. Presence is not a count and must not be copied from detector counts.',
+    '- gradeHint is the single best overall batch description. gradePresence records whether at least one visible nut matches each grade. These are separate judgements.',
+    '- If the image contains mixed quality, set containsMixedGrades=true and still return one overall image-level hint and the per-grade presence observations.',
+    '- Use short evidence items; do not guess hidden or off-frame nuts. Do not state where an item is located.',
+    '- A reviewRecommendation is required. Use a practical next step such as a closer photo or human review when ambiguous; use "No further visual review needed" only when the image is clear.',
     '- If the image is not arecanut, is too blurry, or is too dark, set imageUsable=false and gradeHint="unknown".',
   ];
 
@@ -277,18 +329,18 @@ function buildPrompt(context = {}) {
     lines.push(
       '',
       'Defect review:',
-      '- Review these categories: ' + enabledDefects + '.',
-      '- For each category, set status to exactly one of: detected, not_detected, uncertain, error.',
-      '- Use detected only when the defect appearance is clearly visible in this image.',
-      '- Use not_detected only when the image is usable and no visible evidence of that category is present.',
-      '- Use uncertain when lighting, blur, overlap, resolution, or angle makes the finding ambiguous.',
-      '- Use error only when the category cannot be assessed from this image; explain why.',
-      '- Give a short, concrete visual explanation for every category, including not_detected.',
+      '- Review these categories independently: ' + enabledDefects + '.',
+      '- For each category, set status to exactly one of: detected, not_detected, uncertain, unavailable.',
+      '- First inspect the full image systematically: centre, edges, highlights, shadows, seams, and overlapping nuts. Look for small or localized evidence before deciding.',
+      '- Use detected only when the defect appearance is clearly visible in this image. Describe the visible appearance, not a diagnosis.',
+      '- Use not_detected only after that inspection, when the image is usable and no visible evidence of that category is present. Never use not_detected as a default or merely because you are unsure.',
+      '- Use uncertain when lighting, blur, overlap, resolution, or angle makes the finding ambiguous. When in doubt between not_detected and uncertain, choose uncertain.',
+      '- Use unavailable only when the category cannot be assessed from this image; explain why.',
+      '- Assess each category separately. Do not let the overall grade, the detector counts, or a finding in one category determine another category.',
+      '- Give a short, concrete visual explanation for every category, including not_detected and unavailable.',
       '- Report "Suspected Mold" or "mold-like growth" only. Never claim a fungal infection or identify a fungus.',
       '- Account for shadows, highlights, natural colour variation, and processing artefacts before calling discolouration or black spots.',
-      '- Do not describe defect locations, bounding boxes, regions, or individual nuts.',
-      '- Always set affectedNutCount to null. Do not count affected nuts; you are an image-level reviewer, not a detector, and the application discards any count.',
-      '- Do not automatically downgrade a grade because a defect finding is present. Defect findings and grade hints are separate outputs.',
+      '- Always set affectedNutCount to null. Do not count affected nuts or report locations; you are an image-level reviewer, not a detector, and the application discards any count.',
       '- Return exactly one object for each of the four defect keys.'
     );
   }
@@ -315,7 +367,7 @@ function validateDefectCategories(raw, requireDefects) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       throw new Error(`Gemini defect finding "${key}" is missing or invalid.`);
     }
-    if (!['detected', 'not_detected', 'uncertain', 'error'].includes(item.status)) {
+    if (!['detected', 'not_detected', 'uncertain', 'unavailable'].includes(item.status)) {
       throw new Error(`Gemini defect finding "${key}" has an invalid status.`);
     }
     const explanation = String(item.explanation || '').trim();
@@ -359,6 +411,25 @@ function parseJsonResponse(text, options = {}) {
   if (!allowed.includes(parsed.gradeHint)) {
     throw new Error('Gemini response has an invalid gradeHint.');
   }
+  const gradePresence = normaliseGradePresence(parsed.gradePresence);
+  if (!gradePresence || Object.keys(gradePresence).length !== 4) {
+    throw new Error('Gemini response is missing complete gradePresence observations.');
+  }
+  Object.entries(gradePresence).forEach(([letter, item]) => {
+    if (!item.evidence) {
+      throw new Error(`Gemini gradePresence for Grade ${letter} is missing evidence.`);
+    }
+  });
+  const reviewRecommendation = String(
+    parsed.reviewRecommendation === undefined || parsed.reviewRecommendation === null
+      ? ''
+      : parsed.reviewRecommendation
+  )
+    .trim()
+    .slice(0, 320);
+  if (!reviewRecommendation) {
+    throw new Error('Gemini response is missing reviewRecommendation.');
+  }
   if (!Array.isArray(parsed.evidence) || !Array.isArray(parsed.limitations)) {
     throw new Error('Gemini response is missing evidence or limitations.');
   }
@@ -386,6 +457,8 @@ function parseJsonResponse(text, options = {}) {
   return {
     imageUsable: parsed.imageUsable,
     gradeHint: parsed.gradeHint,
+    gradePresence,
+    reviewRecommendation,
     evidence,
     limitations,
     containsMixedGrades: parsed.containsMixedGrades,
@@ -603,6 +676,9 @@ async function analyzeImage(buffer, options = {}) {
           imageHeight: image.height,
           imageUsable: parsed.imageUsable,
           gradeHint: parsed.gradeHint,
+          gradePresence: parsed.gradePresence,
+          visibleGrades: visibleAdvisoryGrades(parsed),
+          reviewRecommendation: parsed.reviewRecommendation,
           evidence: parsed.evidence,
           limitations: parsed.limitations,
           containsMixedGrades: parsed.containsMixedGrades,
@@ -659,6 +735,26 @@ async function analyzeImage(buffer, options = {}) {
     : cooling
     ? `All ${cooling} configured Gemini key(s) are cooling down after failures.`
     : 'Gemini-assisted review could not be completed.';
+  if (config.env !== 'test' && !process.env.NODE_TEST_CONTEXT) {
+    // Safe diagnostics only: key labels are environment-variable suffixes and
+    // never contain key material, and image bytes are never logged.
+    console.warn(
+      '[gemini] visual review unavailable',
+      JSON.stringify({
+        code: 'all_keys_failed',
+        model: geminiSettings.model,
+        includeDefects,
+        imageWidth: image.width,
+        imageHeight: image.height,
+        attempts: errors.length,
+        availableKeys: available.length,
+        coolingKeys: cooling,
+        lastFailure: errors.length
+          ? { key: errors[errors.length - 1].key, code: errors[errors.length - 1].code }
+          : null,
+      })
+    );
+  }
   throw new GeminiServiceError(reason, {
     code: 'all_keys_failed',
     statusCode: 503,

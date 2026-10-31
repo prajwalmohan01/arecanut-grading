@@ -3,6 +3,10 @@
 const PDFDocument = require('pdfkit');
 const { normalizeForPdf } = require('./imageNormalizer');
 const { DEFECT_LABELS } = require('../services/defectService');
+const {
+  normaliseGradePresence,
+  visibleAdvisoryGrades,
+} = require('../services/advisoryService');
 
 const COLORS = {
   forest: '#1F5136',
@@ -214,13 +218,18 @@ const DEFECT_STATUS_LABELS = {
   detected: 'Detected',
   not_detected: 'Not detected',
   uncertain: 'Uncertain',
-  error: 'Analysis unavailable',
+  unavailable: 'Analysis unavailable',
 };
 
+function normaliseDefectStatus(status) {
+  return status === 'error' ? 'unavailable' : status;
+}
+
 function defectStatusColor(status) {
-  if (status === 'detected') return COLORS.danger;
-  if (status === 'uncertain') return COLORS.gold;
-  if (status === 'error') return COLORS.danger;
+  const normalised = normaliseDefectStatus(status);
+  if (normalised === 'detected') return COLORS.danger;
+  if (normalised === 'uncertain') return COLORS.gold;
+  if (normalised === 'unavailable') return COLORS.danger;
   return COLORS.emerald;
 }
 
@@ -255,9 +264,10 @@ function addDefects(doc, defects) {
   }
 
   entries.forEach((item) => {
-    keyValue(doc, item.name || item.key || 'Defect', DEFECT_STATUS_LABELS[item.status] || item.status, {
+    const status = normaliseDefectStatus(item.status);
+    keyValue(doc, item.name || item.key || 'Defect', DEFECT_STATUS_LABELS[status] || item.status, {
       width: 500,
-      color: defectStatusColor(item.status),
+      color: defectStatusColor(status),
     });
     doc
       .font('Helvetica')
@@ -318,15 +328,23 @@ function defectSummaryLine(defects) {
   const entries = Object.values(defects.categories).filter((item) => item && item.status);
   if (!entries.length) return 'Not available';
   const detected = entries
-    .filter((item) => item.status === 'detected')
+    .filter((item) => normaliseDefectStatus(item.status) === 'detected')
     .map((item) => item.name);
-  const uncertain = entries.filter((item) => item.status === 'uncertain').length;
-  const unavailable = entries.filter((item) => item.status === 'error').length;
+  const uncertain = entries.filter(
+    (item) => normaliseDefectStatus(item.status) === 'uncertain'
+  ).length;
+  const unavailable = entries.filter(
+    (item) => normaliseDefectStatus(item.status) === 'unavailable'
+  ).length;
+  const notDetected = entries.filter(
+    (item) => normaliseDefectStatus(item.status) === 'not_detected'
+  ).length;
   const parts = [];
   if (detected.length) parts.push(`Detected: ${detected.join(', ')}`);
   if (uncertain) parts.push(`${uncertain} uncertain`);
   if (unavailable) parts.push(`${unavailable} unavailable`);
-  return parts.length ? parts.join(' · ') : 'None detected';
+  if (!parts.length && notDetected) return 'None detected';
+  return parts.length ? parts.join(' · ') : 'Not available';
 }
 
 function addMeasurements(doc, measurements) {
@@ -448,6 +466,42 @@ function addGeminiAdvisory(doc, advisory) {
   keyValue(doc, 'Image-level hint', advisory.gradeHint || 'No hint', {
     width: 500,
   });
+  const presence = normaliseGradePresence(advisory.gradePresence);
+  const visible = presence ? visibleAdvisoryGrades(advisory) : [];
+  if (presence) {
+    keyValue(
+      doc,
+      'Visible grade presence',
+      visible.length ? `Grade ${visible.join(', Grade ')}` : 'None reported',
+      { width: 500, color: visible.length ? COLORS.gold : COLORS.muted }
+    );
+    ['A', 'B', 'C', 'D'].forEach((letter) => {
+      if (!presence[letter]) return;
+      keyValue(
+        doc,
+        `Grade ${letter} presence`,
+        presence[letter].visible ? 'Visible example reported' : 'Not reported',
+        {
+          width: 500,
+          color: presence[letter].visible ? COLORS.charcoal : COLORS.muted,
+        }
+      );
+      doc
+        .font('Helvetica')
+        .fontSize(8.1)
+        .fillColor(COLORS.muted)
+        .text(safe(presence[letter].evidence), 153, doc.y, {
+          width: doc.page.width - 201,
+        });
+      doc.moveDown(0.15);
+    });
+  }
+  if (advisory.reviewRecommendation) {
+    keyValue(doc, 'Review recommendation', advisory.reviewRecommendation, {
+      width: 500,
+      color: COLORS.gold,
+    });
+  }
   keyValue(doc, 'Analysis method', 'Gemini vision, image-level', { width: 500 });
   keyValue(doc, 'Model', advisory.model || 'Not available', { width: 500 });
   if (advisory.analyzedAt) {
@@ -844,7 +898,11 @@ async function buildPredictionReport(scan, images = {}, options = {}) {
       .fontSize(9)
       .fillColor(COLORS.charcoal)
       .text(
-        scan.totalCount > 0 && scan.finalGrade
+        scan.finalGradeSource === 'gemini_advisory' && scan.finalGrade
+          ? `No validated Grade C/D detector is installed, so no C/D nut count or calibrated confidence is claimed. The labelled Gemini visual advisory reports a visible Grade ${String(
+              scan.finalGrade
+            ).replace(/^Grade\s*/i, '')} example. This is an image-level review, not a detector count.`
+          : scan.totalCount > 0 && scan.finalGrade
           ? `The model detected ${scan.totalCount} enabled arecanut region(s) and assigned the image-level grade ${scan.finalGrade}. Grade composition: ${gradeCountsText(
               scan
             ).replace(/^\d+\s*/, '')}.`

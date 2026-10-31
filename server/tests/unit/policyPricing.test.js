@@ -176,6 +176,73 @@ test('C/D-only policy exposes no model count or confidence and keeps C/D counts 
   assert.equal(visible.annotatedImageAllowed, false);
 });
 
+test('policy keeps enabled-grade presence when the overall advisory hint names a hidden A/B grade', () => {
+  const settings = settingsWith();
+  settings.predictions.grades = { A: false, B: false, C: false, D: true };
+  settings.predictions.geminiEnabled = true;
+
+  const visible = applyScanPolicy(
+    scan({
+      finalGrade: 'Grade D',
+      finalGradeSource: 'gemini_advisory',
+      geminiAdvisory: {
+        status: 'ok',
+        imageUsable: true,
+        gradeHint: 'Grade A',
+        gradePresence: {
+          A: { visible: true, evidence: 'Clean Grade A examples are visible.' },
+          B: { visible: false, evidence: 'No Grade B example is visible.' },
+          C: { visible: false, evidence: 'Possible Grade C discolouration is visible.' },
+          D: { visible: true, evidence: 'Substantial damage is visible on a nut.' },
+        },
+        reviewRecommendation: 'Grade A looks likely, but confirm the damaged nut.',
+        evidence: ['Possible Grade C appearance and a damaged Grade D nut.'],
+        limitations: ['Not a validated grade.'],
+      },
+    }),
+    settings
+  );
+
+  assert.equal(visible.geminiAdvisory.gradeHint, null);
+  assert.deepEqual(Object.keys(visible.geminiAdvisory.gradePresence), ['D']);
+  assert.equal(visible.geminiAdvisory.gradePresence.D.visible, true);
+  assert.deepEqual(visible.geminiAdvisory.visibleGrades, ['D']);
+  assert.equal(visible.geminiAdvisory.reviewRecommendation, null);
+  assert.deepEqual(visible.geminiAdvisory.evidence, []);
+  assert.match(visible.geminiAdvisory.hiddenReason, /overall grade hint/i);
+});
+
+test('legacy error defect statuses are normalized to unavailable on read', () => {
+  const settings = settingsWith();
+  settings.defects = {
+    masterEnabled: true,
+    categories: { blackSpots: true, cracks: true, mold: true, discoloration: true },
+  };
+  const visible = applyScanPolicy(
+    scan({
+      defects: {
+        analysisStatus: 'error',
+        categories: {
+          blackSpots: { status: 'error', explanation: 'Previous request failed.' },
+          cracks: { status: 'not_detected', explanation: 'No splits visible.' },
+          mold: { status: 'uncertain', explanation: 'Pale patch is ambiguous.' },
+          discoloration: { status: 'not_detected', explanation: 'Natural variation.' },
+        },
+      },
+    }),
+    settings
+  );
+
+  assert.equal(visible.defects.analysisStatus, 'partial');
+  assert.equal(visible.defects.categories.blackSpots.status, 'unavailable');
+  assert.equal(
+    ['detected', 'not_detected', 'uncertain', 'unavailable'].includes(
+      visible.defects.categories.blackSpots.status
+    ),
+    true
+  );
+});
+
 test('Gemini advisory text is suppressed when its hinted grade is disabled', () => {
   const settings = settingsWith();
   settings.predictions.grades = { A: false, B: false, C: false, D: true };
@@ -312,7 +379,7 @@ test('a missing stored defect analysis is reported as unavailable, not not-detec
 
   assert.equal(visible.defects.analysisStatus, 'unavailable');
   assert.equal(visible.defects.errorCode, 'not_analyzed');
-  assert.equal(visible.defects.categories.blackSpots.status, 'error');
+  assert.equal(visible.defects.categories.blackSpots.status, 'unavailable');
   assert.match(visible.defects.categories.blackSpots.explanation, /No Gemini defect analysis/);
   assert.equal(
     Object.values(visible.defects.categories).some((item) => item.status === 'not_detected'),

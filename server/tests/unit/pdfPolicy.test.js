@@ -275,6 +275,94 @@ test('PDF includes enabled defect findings and omits disabled categories and unv
   assert.doesNotMatch(text, /Affected nuts: 7/);
 });
 
+test('PDF never renders an unavailable defect analysis as \"None detected\" and shows advisory presence', async () => {
+  const images = await makeImages();
+  const defects = storedDefects();
+  defects.analysisStatus = 'unavailable';
+  defects.categories = {
+    blackSpots: {
+      key: 'blackSpots',
+      name: 'Black Spots',
+      status: 'unavailable',
+      affectedNutCount: null,
+      explanation: 'Analysis unavailable: Gemini timed out. This is not a detection result.',
+    },
+    cracks: {
+      key: 'cracks',
+      name: 'Cracks',
+      status: 'unavailable',
+      affectedNutCount: null,
+      explanation: 'Analysis unavailable: Gemini timed out. This is not a detection result.',
+    },
+    mold: {
+      key: 'mold',
+      name: 'Suspected Mold',
+      status: 'unavailable',
+      affectedNutCount: null,
+      explanation: 'Analysis unavailable: Gemini timed out. This is not an absence finding.',
+    },
+    discoloration: {
+      key: 'discoloration',
+      name: 'Discoloration',
+      status: 'unavailable',
+      affectedNutCount: null,
+      explanation: 'Analysis unavailable: Gemini timed out. This is not an absence finding.',
+    },
+  };
+
+  const view = applyScanPolicy(
+    scan({
+      finalGrade: 'Grade D',
+      finalGradeSource: 'gemini_advisory',
+      finalGradeLabel: 'Advisory visual grade (non-counting)',
+      defects,
+      geminiAdvisory: {
+        status: 'ok',
+        advisoryOnly: true,
+        imageUsable: true,
+        gradeHint: 'Grade A',
+        gradePresence: {
+          A: { visible: true, evidence: 'Clean Grade A examples are visible.' },
+          B: { visible: false, evidence: 'No Grade B example is visible.' },
+          C: { visible: false, evidence: 'No clearly Grade C example is visible.' },
+          D: { visible: true, evidence: 'Substantial damage is visible on a nut.' },
+        },
+        reviewRecommendation: 'Retake a closer, evenly lit photo for a second review.',
+        evidence: ['A damaged nut is visible.'],
+        limitations: ['Advisory only.'],
+      },
+    }),
+    settingsWithGrades(
+      { A: false, B: false, C: true, D: true },
+      {
+        geminiEnabled: true,
+        defects: {
+          masterEnabled: true,
+          categories: {
+            blackSpots: true,
+            cracks: true,
+            mold: true,
+            discoloration: true,
+          },
+        },
+      }
+    )
+  );
+
+  const pdf = await buildPredictionReport(view, images);
+  const text = await textOf(pdf);
+  assert.match(text, /DEFECT ANALYSIS \(GEMINI IMAGE-LEVEL REVIEW\)/);
+  assert.match(text, /Analysis unavailable/);
+  assert.match(text, /This is not a detection result/);
+  assert.doesNotMatch(text, /None detected/);
+  assert.match(text, /Visible grade presence/);
+  assert.match(text, /Visible grade presence\s*Grade D/);
+  assert.doesNotMatch(text, /Grade A visible/);
+  assert.match(text, /Review recommendation/);
+  assert.match(text, /Retake a closer, evenly lit photo/);
+  assert.match(text, /GEMINI VISUAL ADVISORY/);
+});
+
 test('PDF omits defect analysis when master defect detection is off', async () => {
   const images = await makeImages();
   const view = applyScanPolicy(

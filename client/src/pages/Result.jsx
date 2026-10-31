@@ -48,6 +48,8 @@ const DEFECT_STATUS = {
   detected: { label: 'Detected', badge: 'badge-danger' },
   not_detected: { label: 'Not detected', badge: 'badge-a' },
   uncertain: { label: 'Uncertain', badge: 'badge-b' },
+  unavailable: { label: 'Analysis unavailable', badge: 'badge-invalid' },
+  // Legacy API records used "error" before the unavailable status existed.
   error: { label: 'Analysis unavailable', badge: 'badge-invalid' },
 };
 
@@ -324,7 +326,25 @@ export default function Result() {
     defectDetectionOn &&
     policy?.geminiEnabled !== false &&
     (defects?.analysisStatus === 'unavailable' ||
-      defectEntries.some((item) => item.status === 'error'));
+      defectEntries.some((item) =>
+        ['unavailable', 'error'].includes(item.status)
+      ));
+  const advisory = scan.geminiAdvisory;
+  const advisoryPresence =
+    advisory?.gradePresence && typeof advisory.gradePresence === 'object'
+      ? advisory.gradePresence
+      : null;
+  const advisoryVisibleGrades = advisoryPresence
+    ? ['A', 'B', 'C', 'D'].filter(
+        (letter) => advisoryPresence[letter]?.visible === true
+      )
+    : [];
+  const unavailableDefectCount = defectEntries.filter((item) =>
+    ['unavailable', 'error'].includes(item.status)
+  ).length;
+  const uncertainDefectCount = defectEntries.filter(
+    (item) => item.status === 'uncertain'
+  ).length;
   const warnings = scan.warnings || [];
 
   return (
@@ -495,10 +515,10 @@ export default function Result() {
                 {supportedLetters.length
                   ? supportedLetters.map((letter) => `Grade ${letter}`).join(', ')
                   : 'no grade'}{' '}
-                classes. Grade {unsupportedLetters.join(' / ')} is shown only when Gemini
-                provides a validated visual advisory. Gemini is never used as an object detector,
-                so no C/D detections or counts are inferred from A/B results. Install a validated
-                four-class detector to obtain C/D counts.
+                classes. Grade {unsupportedLetters.join(' / ')} is shown only when the enabled
+                Gemini advisory reports a visible example. Gemini is never used as an object
+                detector, so no C/D detections or counts are inferred from A/B results. Install a
+                validated four-class detector to obtain C/D counts.
               </p>
             </Card>
           )}
@@ -521,9 +541,44 @@ export default function Result() {
               </div>
               <div className="mt-3 space-y-2 text-xs leading-relaxed text-muted">
                 <p>
-                  <span className="font-semibold text-main">Grade hint:</span>{' '}
+                  <span className="font-semibold text-main">Overall batch hint:</span>{' '}
                   {scan.geminiAdvisory.gradeHint || 'No grade hint returned.'}
                 </p>
+                {advisoryPresence ? (
+                  <div>
+                    <p className="font-semibold text-main">Visible grade presence</p>
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {advisoryVisibleGrades.length > 0 ? (
+                        advisoryVisibleGrades.map((letter) => (
+                          <span key={letter} className="badge badge-b">
+                            Grade {letter} visible
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-[11px]">No grade was marked visibly present.</span>
+                      )}
+                    </div>
+                    <ul className="mt-2 space-y-1.5">
+                      {['A', 'B', 'C', 'D'].map((letter) => {
+                        const item = advisoryPresence[letter];
+                        if (!item) return null;
+                        return (
+                          <li key={letter} className="text-[11px] leading-relaxed">
+                            <span className="font-semibold text-main">Grade {letter}:</span>{' '}
+                            {item.visible ? 'visible example reported' : 'not reported'}
+                            {item.evidence ? ` — ${item.evidence}` : ''}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ) : null}
+                {scan.geminiAdvisory.reviewRecommendation && (
+                  <p>
+                    <span className="font-semibold text-main">Review recommendation:</span>{' '}
+                    {scan.geminiAdvisory.reviewRecommendation}
+                  </p>
+                )}
                 {scan.geminiAdvisory.note && <p>{scan.geminiAdvisory.note}</p>}
                 {Array.isArray(scan.geminiAdvisory.evidence) && scan.geminiAdvisory.evidence.length > 0 && (
                   <div>
@@ -675,7 +730,9 @@ export default function Result() {
                       <tr>
                         <th>#</th>
                         <th>Class</th>
-                        <th>Confidence</th>
+                        <th>Method</th>
+                        <th>Detection confidence</th>
+                        <th>Grade confidence</th>
                         <th>Box (x1, y1, x2, y2)</th>
                         <th>Size (px)</th>
                         <th>Aspect</th>
@@ -690,8 +747,17 @@ export default function Result() {
                               {detection.label}
                             </span>
                           </td>
+                          <td className="whitespace-nowrap text-[11px] text-muted">
+                            {detection.method || 'YOLO detector'}
+                          </td>
                           <td className="text-sm text-main">
                             {formatPercent(detection.confidence_pct ?? (detection.confidence || 0) * 100, 2)}
+                          </td>
+                          <td className="whitespace-nowrap text-xs text-muted">
+                            {detection.grade_confidence_pct === undefined ||
+                            detection.grade_confidence_pct === null
+                              ? 'Not calibrated'
+                              : formatPercent(detection.grade_confidence_pct, 2)}
                           </td>
                           <td className="whitespace-nowrap font-mono text-[11px] text-muted">
                             {(detection.bbox || []).map((value) => Number(value).toFixed(0)).join(', ')}
@@ -736,6 +802,16 @@ export default function Result() {
                 <DetailRow
                   label="Total detected"
                   value={countAvailable ? formatNumber(total) : 'No enabled per-nut count'}
+                />
+                <DetailRow
+                  label="Defect categories needing review"
+                  value={
+                    defectEntries.length
+                      ? `${formatNumber(unavailableDefectCount + uncertainDefectCount)} of ${formatNumber(
+                          defectEntries.length
+                        )} (uncertain or unavailable)`
+                      : 'No defect categories analyzed'
+                  }
                 />
                 {breakdown.map((item) => {
                   const availability = gradeAvailability(scan, item.letter);

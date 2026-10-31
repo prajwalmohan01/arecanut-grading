@@ -23,10 +23,25 @@ const PNG = Buffer.from(
   'base64'
 );
 
+function validGradePresence(overrides = {}) {
+  const base = {
+    A: { visible: false, evidence: 'No uniform, clean examples of Grade A are visible.' },
+    B: { visible: false, evidence: 'No clearly Grade B examples are visible.' },
+    C: { visible: true, evidence: 'Darker, uneven surface colour is visible on some nuts.' },
+    D: { visible: false, evidence: 'No severely damaged or substantially defective examples are visible.' },
+  };
+  return {
+    ...base,
+    ...overrides,
+  };
+}
+
 function validAdvisory(overrides = {}) {
   return {
     imageUsable: true,
     gradeHint: 'Grade C',
+    gradePresence: validGradePresence(),
+    reviewRecommendation: 'Retake a closer, evenly lit photo to confirm the visible colour variation.',
     evidence: ['Darker, uneven surface colour is visible in the image.'],
     limitations: ['This is an advisory visual review, not a validated grade.'],
     containsMixedGrades: false,
@@ -193,11 +208,121 @@ test('Gemini JSON parser enforces the strict advisory schema', () => {
     {
       imageUsable: false,
       gradeHint: 'unknown',
+      gradePresence: validAdvisory().gradePresence,
+      reviewRecommendation: validAdvisory().reviewRecommendation,
       evidence: [],
       limitations: validAdvisory().limitations,
       containsMixedGrades: true,
       defects: null,
     }
+  );
+});
+
+test('Gemini rejects malformed, empty, and missing-grade-presence responses instead of inventing results', async (t) => {
+  const env = snapshotEnv();
+  const previousFetch = setFetchForTests(null);
+  resetGeminiState();
+  t.after(() => {
+    restoreEnv(env);
+    setFetchForTests(previousFetch);
+    resetGeminiState();
+  });
+
+  clearKeys();
+  process.env.GEMINI_API_KEY = 'unit-test-validation-key';
+
+  const cases = [
+    {
+      label: 'empty response',
+      reply: () => response(200, { candidates: [{ content: { parts: [] } }] }),
+      expected: /empty response/i,
+    },
+    {
+      label: 'truncated JSON',
+      reply: () =>
+        response(200, {
+          candidates: [{ content: { parts: [{ text: '{"imageUsable": true' }] } }],
+        }),
+      expected: /failed validation/i,
+    },
+    {
+      label: 'missing grade presence',
+      reply: () => {
+        const payload = validAdvisory();
+        delete payload.gradePresence;
+        return response(200, envelope(payload));
+      },
+      expected: /gradePresence/i,
+    },
+    {
+      label: 'invalid defect status',
+      reply: () =>
+        response(
+          200,
+          envelope({
+            ...validAdvisory(),
+            defects: validDefects({
+              cracks: { status: 'error', explanation: 'Could not assess.' },
+            }),
+          })
+        ),
+      expected: /cracks.*invalid status/i,
+    },
+  ];
+
+  for (const item of cases) {
+    resetGeminiState();
+    setFetchForTests(async () => item.reply());
+    await assert.rejects(
+      analyzeImage(PNG, {
+        settings: geminiSettings(),
+        context: { includeDefects: item.label === 'invalid defect status', requireDefects: true },
+      }),
+      (error) =>
+        error.code === 'all_keys_failed' &&
+        item.expected.test(error.message) &&
+        !/not_detected/.test(error.message),
+      item.label
+    );
+  }
+});
+
+test('Gemini timeout is surfaced as unavailable, not as a clean negative finding', async (t) => {
+  const env = snapshotEnv();
+  const previousFetch = setFetchForTests(null);
+  resetGeminiState();
+  t.after(() => {
+    restoreEnv(env);
+    setFetchForTests(previousFetch);
+    resetGeminiState();
+  });
+
+  clearKeys();
+  process.env.GEMINI_API_KEY = 'unit-test-timeout-key';
+  setFetchForTests(
+    (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => {
+          const error = new Error('aborted');
+          error.name = 'AbortError';
+          reject(error);
+        });
+      })
+  );
+
+  await assert.rejects(
+    analyzeImage(PNG, {
+      settings: geminiSettings({ timeoutMs: 10, maxRetries: 0 }),
+      context: {
+        includeDefects: true,
+        requireDefects: true,
+        enabledDefectCategories: ['blackSpots'],
+      },
+    }),
+    (error) =>
+      error.code === 'all_keys_failed' &&
+      /timed out/i.test(error.message) &&
+      !/not_detected/.test(error.message)
   );
 });
 
@@ -237,6 +362,9 @@ test('Gemini defect analysis returns image-level statuses and discards unverifie
 
   assert.equal(result.status, 'ok');
   assert.equal(result.analysisMethod, 'gemini_vision');
+  assert.equal(result.gradePresence.C.visible, true);
+  assert.equal(result.visibleGrades.includes('C'), true);
+  assert.match(result.reviewRecommendation, /closer|confirm/i);
   assert.equal(result.defects.analysisStatus, 'success');
   assert.equal(result.defects.analysisMethod, 'gemini_vision');
   assert.equal(result.defects.localizationAvailable, false);
@@ -249,9 +377,21 @@ test('Gemini defect analysis returns image-level statuses and discards unverifie
     requestBody.generationConfig.responseSchema.properties.defects.required.includes('mold'),
     true
   );
+  assert.equal(
+    requestBody.generationConfig.responseSchema.properties.defects.properties.mold.properties.status.enum.includes('unavailable'),
+    true
+  );
+  assert.equal(requestBody.generationConfig.responseSchema.properties.defects.properties.mold.properties.status.enum.includes('error'), false);
   const prompt = requestBody.contents[0].parts[0].text;
   assert.match(prompt, /Never claim a fungal infection/);
   assert.match(prompt, /affectedNutCount to null/);
+  assert.match(prompt, /Never use not_detected as a default/);
+  assert.match(prompt, /Grade C = fair appearance/);
+  assert.match(prompt, /Grade D = poor appearance/);
+  assert.match(prompt, /Review all four grade definitions/);
+  const imagePart = requestBody.contents[0].parts[1];
+  assert.equal(imagePart.inline_data.mime_type, 'image/jpeg');
+  assert.ok(Buffer.from(imagePart.inline_data.data, 'base64').slice(0, 2).equals(Buffer.from([0xff, 0xd8])));
   assert.equal(JSON.stringify(result).includes('unit-test-defect-key-not-real'), false);
 });
 

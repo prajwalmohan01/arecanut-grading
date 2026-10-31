@@ -48,6 +48,10 @@ const {
 } = require('../services/presentationService');
 const { analyzeImage } = require('../services/geminiService');
 const {
+  unavailableAdvisory,
+  selectAdvisoryFinalGrade,
+} = require('../services/advisoryService');
+const {
   DEFECT_KEYS,
   DEFECT_LABELS,
   buildUnavailableDefects,
@@ -84,6 +88,10 @@ function normalizeGrade(value) {
   const raw = String(value).trim();
   const letterMatch = raw.match(/^(?:grade\s*)?([abcd])$/i);
   if (letterMatch) return `Grade ${letterMatch[1].toUpperCase()}`;
+  const qualityMatch = raw.match(/^q[\s_-]*([1-4])$/i);
+  if (qualityMatch) {
+    return `Grade ${['A', 'B', 'C', 'D'][Number(qualityMatch[1]) - 1]}`;
+  }
   if (/^invalid$/i.test(raw)) return 'Invalid';
   return null;
 }
@@ -113,20 +121,6 @@ function gradeFilterError(query, policy) {
 
 function gradeLetterForFinalGrade(value) {
   return gradeLetterFromValue(value);
-}
-
-function unavailableAdvisory(message, errorCode) {
-  return {
-    status: 'unavailable',
-    advisoryOnly: true,
-    analysisMethod: 'gemini_vision',
-    gradeHint: null,
-    evidence: [],
-    limitations: [message],
-    note:
-      'Gemini-assisted Grade C/D review is unavailable. No Grade C/D count or grade was invented. This is not a validation result.',
-    errorCode: errorCode || 'gemini_unavailable',
-  };
 }
 
 async function runGeminiAnalysis({
@@ -183,6 +177,7 @@ async function runGeminiAnalysis({
         supportedGrades: inference.supportedGrades.filter((letter) =>
           policy.enabledLetters.includes(letter)
         ),
+        enabledGrades: policy.enabledLetters,
         counts: contextCounts,
         includeDefects: needsDefects,
         requireDefects: needsDefects,
@@ -293,7 +288,7 @@ function emptyDefectSummary(enabledKeys) {
       detected: 0,
       not_detected: 0,
       uncertain: 0,
-      error: 0,
+      unavailable: 0,
       analyzed: 0,
     };
   });
@@ -329,9 +324,13 @@ function defectSummaryPipeline(filter, enabledKeys) {
 function applyDefectRows(summary, rows) {
   (rows || []).forEach((row) => {
     const key = row && row._id && row._id.key;
-    const status = row && row._id && row._id.status;
+    const rawStatus = row && row._id && row._id.status;
+    const status = rawStatus === 'error' ? 'unavailable' : rawStatus;
     const category = key && summary.categories[key];
-    if (!category || !['detected', 'not_detected', 'uncertain', 'error'].includes(status)) {
+    if (
+      !category ||
+      !['detected', 'not_detected', 'uncertain', 'unavailable'].includes(status)
+    ) {
       return;
     }
     category[status] += Number(row.count) || 0;
@@ -425,12 +424,12 @@ router.post(
     let finalGrade = inference.finalGrade;
     let finalGradeSource = 'model';
     if (onlyAdvisoryGrades) {
-      if (
-        advisory &&
-        advisory.status === 'ok' &&
-        ['Grade C', 'Grade D'].includes(advisory.gradeHint)
-      ) {
-        finalGrade = advisory.gradeHint;
+      const advisoryGrade = selectAdvisoryFinalGrade(
+        advisory,
+        policy.enabledLetters
+      );
+      if (advisoryGrade) {
+        finalGrade = advisoryGrade;
         finalGradeSource = 'gemini_advisory';
       } else {
         finalGrade = 'Invalid';
@@ -1186,6 +1185,26 @@ router.post(
 
     scan.geminiAdvisory = gemini.advisory;
     scan.defects = gemini.defects;
+    const supportedGrades = Array.isArray(scan.supportedGrades) && scan.supportedGrades.length
+      ? scan.supportedGrades
+      : ['A', 'B'];
+    const enabledAb = policy.enabledLetters.filter(
+      (letter) => ['A', 'B'].includes(letter) && supportedGrades.includes(letter)
+    );
+    const onlyAdvisoryGrades =
+      policy.enabledLetters.length > 0 &&
+      enabledAb.length === 0 &&
+      policy.enabledLetters.some((letter) => ['C', 'D'].includes(letter));
+    if (onlyAdvisoryGrades) {
+      const advisoryGrade = selectAdvisoryFinalGrade(
+        gemini.advisory,
+        policy.enabledLetters
+      );
+      scan.finalGrade = advisoryGrade || 'Invalid';
+      scan.finalGradeSource = advisoryGrade ? 'gemini_advisory' : 'none';
+      scan.confidence = null;
+      scan.qualityScore = null;
+    }
     await scan.save();
 
     const view = await presentScan(scan, settings, {

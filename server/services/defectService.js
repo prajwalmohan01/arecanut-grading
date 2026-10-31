@@ -16,7 +16,10 @@ const DEFECT_LABELS = {
   mold: 'Suspected Mold',
   discoloration: 'Discoloration',
 };
-const DEFECT_STATUSES = ['detected', 'not_detected', 'uncertain', 'error'];
+const DEFECT_STATUSES = ['detected', 'not_detected', 'uncertain', 'unavailable'];
+// "error" is accepted only when reading records written before the
+// unavailable status was introduced. It is never emitted for new results.
+const LEGACY_DEFECT_STATUSES = ['error'];
 const DEFECT_ANALYSIS_STATUSES = ['success', 'partial', 'unavailable', 'error'];
 
 const COUNT_NOTE =
@@ -45,20 +48,23 @@ function uniqueKeys(keys) {
   );
 }
 
+function normaliseStatus(value) {
+  if (LEGACY_DEFECT_STATUSES.includes(value)) return 'unavailable';
+  return DEFECT_STATUSES.includes(value) ? value : null;
+}
+
 function normaliseCategory(raw, key, options = {}) {
-  const fallbackStatus = DEFECT_STATUSES.includes(options.fallbackStatus)
-    ? options.fallbackStatus
-    : 'error';
-  const status = DEFECT_STATUSES.includes(raw && raw.status)
-    ? raw.status
-    : options.forceError
-    ? 'error'
-    : fallbackStatus;
+  const fallbackStatus =
+    normaliseStatus(options.fallbackStatus) || 'unavailable';
+  const rawStatus = normaliseStatus(raw && raw.status);
+  const status = options.forceUnavailable
+    ? 'unavailable'
+    : rawStatus || fallbackStatus;
   const fallbackExplanation =
     options.fallbackExplanation ||
     'No verified result is available for this defect category.';
   let explanation = cleanText(raw && raw.explanation);
-  if (status === 'error' && options.forceExplanation) {
+  if (status === 'unavailable' && options.forceExplanation) {
     explanation = options.forceExplanation;
   }
   if (!explanation) explanation = fallbackExplanation;
@@ -89,8 +95,8 @@ function normaliseCategory(raw, key, options = {}) {
 function overallStatus(categories) {
   const values = Object.values(categories || {});
   if (!values.length) return 'unavailable';
-  if (values.every((item) => item.status === 'error')) return 'unavailable';
-  if (values.some((item) => item.status === 'error')) return 'partial';
+  if (values.every((item) => item.status === 'unavailable')) return 'unavailable';
+  if (values.some((item) => item.status === 'unavailable')) return 'partial';
   return 'success';
 }
 
@@ -106,22 +112,21 @@ function buildGeminiDefectAnalysis(options = {}) {
       key,
       imageUsable
         ? {
-            fallbackStatus: 'error',
+            fallbackStatus: 'unavailable',
             fallbackExplanation:
               'Gemini did not return a usable result for this defect category.',
           }
         : {
-            fallbackStatus: 'error',
-            forceError: true,
+            fallbackStatus: 'unavailable',
+            forceUnavailable: true,
             forceExplanation:
               'Analysis unavailable because the uploaded image was not usable for a visual defect review. This is not a "not detected" result.',
           }
     );
     if (!imageUsable) {
-      categories[key].status = 'error';
+      categories[key].status = 'unavailable';
       categories[key].explanation =
         'Analysis unavailable because the uploaded image was not usable for a visual defect review. This is not a "not detected" result.';
-      
     }
   });
 
@@ -150,8 +155,8 @@ function buildUnavailableDefects(options = {}) {
   const categories = {};
   effectiveKeys.forEach((key) => {
     categories[key] = normaliseCategory(null, key, {
-      fallbackStatus: 'error',
-      forceError: true,
+      fallbackStatus: 'unavailable',
+      forceUnavailable: true,
       forceExplanation: `Analysis unavailable: ${message} This is not a "not detected" result.`,
     });
   });
@@ -220,14 +225,14 @@ function filterDefectAnalysis(raw, enabledKeys, options = {}) {
     const stored = raw.categories[key];
     if (!stored || typeof stored !== 'object') {
       categories[key] = normaliseCategory(null, key, {
-        fallbackStatus: 'error',
+        fallbackStatus: 'unavailable',
         forceExplanation:
           'No stored result exists for this enabled defect category. Run the analysis again.',
       });
       return;
     }
     categories[key] = normaliseCategory(stored, key, {
-      fallbackStatus: 'error',
+      fallbackStatus: 'unavailable',
       fallbackExplanation:
         'No usable stored result exists for this enabled defect category.',
     });
@@ -238,10 +243,7 @@ function filterDefectAnalysis(raw, enabledKeys, options = {}) {
     (item) => !disabledPatterns.some(({ pattern }) => pattern.test(item))
   );
 
-  let analysisStatus = DEFECT_ANALYSIS_STATUSES.includes(raw.analysisStatus)
-    ? raw.analysisStatus
-    : overallStatus(categories);
-  if (analysisStatus === 'success') analysisStatus = overallStatus(categories);
+  const analysisStatus = overallStatus(categories);
 
   return {
     analysisStatus,

@@ -8,6 +8,10 @@ const {
   DEFECT_LABELS,
   filterDefectAnalysis,
 } = require('./defectService');
+const {
+  normaliseGradePresence,
+  visibleAdvisoryGrades,
+} = require('./advisoryService');
 
 const GRADES = ['A', 'B', 'C', 'D'];
 const PRICE_UNITS = ['per_nut', 'per_kg', 'per_quintal'];
@@ -113,6 +117,16 @@ function mergeDefaults(raw) {
   // stored default without overriding any other administrator choice.
   if (merged.gemini.model === 'gemini-2.5-flash') {
     merged.gemini.model = defaults.gemini.model;
+  }
+  // The original 1280 px default hid small defects in dense tray images. Move
+  // only the untouched legacy default; administrators can set any value in the
+  // 256-4096 px range and that value is preserved.
+  if (
+    Number(merged.gemini.imageMaxDimension) === 1280 &&
+    Number(merged.gemini.timeoutMs) === 30000 &&
+    Number(merged.gemini.maxRetries) === 2
+  ) {
+    merged.gemini.imageMaxDimension = defaults.gemini.imageMaxDimension;
   }
   return merged;
 }
@@ -583,7 +597,10 @@ function buildPolicy(settings) {
 function gradeOfDetection(detection) {
   if (!detection || typeof detection !== 'object') return null;
   const raw = detection.grade || detection.label || '';
-  const match = String(raw).match(/([abcd])$/i);
+  const text = String(raw).trim();
+  const quality = text.match(/\bq\s*([1-4])\b/i);
+  if (quality) return ['A', 'B', 'C', 'D'][Number(quality[1]) - 1];
+  const match = text.match(/([abcd])\s*$/i);
   return match ? match[1].toUpperCase() : null;
 }
 
@@ -799,14 +816,31 @@ function applyScanPolicy(scan, settings) {
   if (!policy.enabledLetters.some((letter) => ['C', 'D'].includes(letter))) {
     result.geminiAdvisory = null;
   } else if (result.geminiAdvisory && typeof result.geminiAdvisory === 'object') {
-    const hint = result.geminiAdvisory.gradeHint;
+    const advisory = result.geminiAdvisory;
+    const hint = advisory.gradeHint;
     const hintLetterMatch = String(hint || '').match(/([abcd])$/i);
     const hintLetter = hintLetterMatch ? hintLetterMatch[1].toUpperCase() : null;
-    if (hintLetter && !policy.enabledLetters.includes(hintLetter)) {
+    const hintHidden = Boolean(
+      hintLetter && !policy.enabledLetters.includes(hintLetter)
+    );
+    const presence = normaliseGradePresence(advisory.gradePresence);
+    const visible = presence
+      ? visibleAdvisoryGrades(
+          { gradePresence: presence },
+          policy.enabledLetters
+        )
+      : [];
+
+    if (hintHidden && !visible.length) {
       result.geminiAdvisory = {
-        status: result.geminiAdvisory.status || 'hidden_by_policy',
+        status: advisory.status || 'hidden_by_policy',
         advisoryOnly: true,
+        analysisMethod: advisory.analysisMethod || 'gemini_vision',
+        imageUsable: advisory.imageUsable,
         gradeHint: null,
+        gradePresence: null,
+        visibleGrades: [],
+        reviewRecommendation: null,
         evidence: [],
         limitations: [
           'The Gemini advisory mentioned a grade hidden by the active display policy, so its text was suppressed.',
@@ -815,6 +849,35 @@ function applyScanPolicy(scan, settings) {
         note:
           'Gemini is never used as an object detector or to create Grade C/D nut counts.',
       };
+    } else {
+      const hiddenGradePatterns = ['A', 'B', 'C', 'D']
+        .filter((letter) => !policy.enabledLetters.includes(letter))
+        .map((letter) => new RegExp(`grade\\s*${letter}\\b`, 'i'));
+      const withoutHiddenMentions = (values) =>
+        (Array.isArray(values) ? values : []).filter(
+          (item) => !hiddenGradePatterns.some((pattern) => pattern.test(String(item)))
+        );
+      const filteredPresence = {};
+      policy.enabledLetters.forEach((letter) => {
+        if (presence && presence[letter]) filteredPresence[letter] = presence[letter];
+      });
+      result.geminiAdvisory = {
+        ...advisory,
+        gradeHint: hintHidden ? null : advisory.gradeHint,
+        gradePresence: presence ? filteredPresence : null,
+        visibleGrades: presence ? visible : [],
+        reviewRecommendation: hiddenGradePatterns.some((pattern) =>
+          pattern.test(String(advisory.reviewRecommendation || ''))
+        )
+          ? null
+          : advisory.reviewRecommendation || null,
+        evidence: withoutHiddenMentions(advisory.evidence),
+        limitations: withoutHiddenMentions(advisory.limitations),
+      };
+      if (hintHidden) {
+        result.geminiAdvisory.hiddenReason =
+          'The overall grade hint named a grade hidden by the display policy. Per-grade evidence for enabled grades is retained.';
+      }
     }
   }
 
