@@ -134,7 +134,9 @@ bounding boxes, and never invents C/D nut counts, confidence percentages, or pri
 
 Gemini keys are **server-only**. `GEMINI_API_KEY` plus `GEMINI_API_KEY_1` through
 `GEMINI_API_KEY_10` are deduplicated, used in order, and fail over on key/permission/quota
-errors. Requests have bounded timeouts (default 30 s), bounded retries for transient 5xx
+errors. Five keys (`GEMINI_API_KEY_1` through `GEMINI_API_KEY_5`) are the recommended
+minimum for free-tier deployments; adding more, up to ten, gives the failover more headroom.
+Requests have bounded timeouts (default 30 s), bounded retries for transient 5xx
 errors (default 2), key cooldowns (default 60 s), and a configurable input image maximum
 (default 1280 px). 429 quota/rate-limit responses cool the key and immediately try the next
 key. Key values are redacted from API responses, errors, audit entries, and logs; use
