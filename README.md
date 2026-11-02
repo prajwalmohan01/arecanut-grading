@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://komarev.com/ghpvc/?username=prajwalmohan01-arecanut-grading&label=Project+Views&color=0e75b6&style=for-the-badge" alt="Arecanut Project Views" />
+  <img src="https://komarev.com/ghpvc/?username=prajwalmohan01-arecanut-grading&label=Arecanut+Grading+System&color=0e75b6&style=for-the-badge" alt="Arecanut Project Views" />
 </p>
 
 # Arecanut Quality Grading System
