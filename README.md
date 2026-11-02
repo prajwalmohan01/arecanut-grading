@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://komarev.com/ghpvc/?username=prajwalmohan01-arecanut-grading&label=Project+Views&color=0e75b6&style=for-the-badge" alt="Arecanut Project Views" />
+</p>
+
 # Arecanut Quality Grading System
 
 MERN application for detecting and grading individual arecanuts in a tray image, with a
