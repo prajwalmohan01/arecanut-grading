@@ -17,7 +17,7 @@ The repository is self-contained: the trained weights (`ml_service/weights/best.
 6.25 MB) are committed, so a second PC can run inference by cloning and installing. No
 retraining, no dataset download, and no Kaggle account are required for normal use.
 
-## What the bundled model actually support
+## What the bundled model actually supports
 
 | Capability | Status with the bundled checkpoint |
 | --- | --- |
